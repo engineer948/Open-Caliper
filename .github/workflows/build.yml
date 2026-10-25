@@ -102,8 +102,11 @@ jobs:
           name: OpenCaliper-windows-x64.zip
           path: OpenCaliper-windows-x64.zip
 
+  # Publishes whatever was built: if one platform fails, the others are released
+  # anyway. Fix it, then move the tag (see README) and the missing file is added
+  # to the same release.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && startsWith(github.ref, 'refs/tags/v') && contains(needs.*.result, 'success')
     needs: [appimage, flatpak, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -117,6 +120,8 @@ jobs:
         with:
           name: OpenCaliper ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
+          overwrite_files: true
+          fail_on_unmatched_files: false
           files: |
             artifacts/**/OpenCaliper-x86_64.AppImage
             artifacts/**/OpenCaliper.flatpak

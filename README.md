@@ -130,7 +130,10 @@ Packages:
 **Making a release:** push a version tag, e.g.
 `git tag v0.1.0 && git push origin v0.1.0`. GitHub Actions builds all three
 files and publishes them on the Releases page, which updates the download
-links above.
+links above. If one platform fails, the others are published anyway; after
+fixing it, move the tag to the new commit and the missing file is added to the
+same release:
+`git tag -f v0.1.0 && git push -f origin v0.1.0`.
 
 ## License
 
@@ -171,24 +174,3 @@ What this means in practice:
 The full texts are in [`LICENSE`](LICENSE),
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) and [`LICENSES/`](LICENSES/),
 and inside the program under **Help → Licenses**.
-
----
-
-## Türkçe özet
-
-OpenCaliper, mekanik parça ve 3D baskı modelleri tasarlamak için açık kaynak,
-parametrik bir 3D CAD programıdır. Önce 2D çizim (sketch) yapılır, ölçü ve
-kısıtlar verilir, sonra Extrude/Revolve ile katıya çevrilir. Her adım soldaki
-Timeline'dan sonradan değiştirilebilir.
-
-- **İndirme:** yukarıdaki tablodan. Linux için AppImage (tek dosya) veya
-  Flatpak (her dağıtımda çalışır), Windows için zip.
-- **Hangi dosya:** Ubuntu 22.04+, Mint 21+, Debian 12+, Fedora 36+, Arch'ta
-  AppImage çalışır. Daha eski sistemlerde, RHEL 9'da ve openSUSE Leap'te
-  Flatpak'i kullanın. Ubuntu 24.04'te AppImage için
-  `sudo apt install libfuse2t64` gerekir.
-- **Lisans:** OpenCaliper'ın kodu MIT'dir: ticari kullanım dahil serbesttir,
-  sadece telif notunun korunması gerekir. Kullanılan kütüphaneler (Open CASCADE,
-  Qt) LGPL'dir. Programı dağıtırken lisans dosyalarının pakette kalması
-  yeterlidir, paketler bunları zaten içerir. Tasarladığınız parçalar size
-  aittir.

@@ -149,7 +149,7 @@ void Viewer::release() {
     // OCCT always reports one harmless "glXMakeCurrent() has failed" while
     // removing a view bound to Qt's context; mute the console just for that.
     const Handle(Message_Messenger)& msg = Message::DefaultMessenger();
-    const Message_SequenceOfPrinters printers = msg->Printers();
+    const auto printers = msg->Printers(); // a copy; the type's name differs between OCCT 7 and 8
     msg->ChangePrinters().Clear();
     m_view->Remove();
     msg->ChangePrinters() = printers;

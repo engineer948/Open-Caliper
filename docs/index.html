@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenCaliper: parametric CAD that belongs to you</title>
+<meta name="description" content="OpenCaliper is a free, open-source parametric 3D CAD program. No subscription, no account, no cloud. Your designs are files on your own computer, in open formats.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect x='8' y='8' width='112' height='112' rx='24' fill='%232563a8'/%3E%3Crect x='20' y='34' width='92' height='16' rx='3' fill='%23f2f5f8'/%3E%3Cpath d='M20 34h18v62l-9 10-9-10z' fill='%23f2f5f8'/%3E%3Cpath d='M58 28h22v28h-4v40l-9 10-9-10z' fill='%23ffb02e'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --text: #1b2330;
+    --muted: #5a6474;
+    --line: #dde2ea;
+    --accent: #2563a8;
+    --accent-strong: #1c4f88;
+    --highlight: #ffb02e;
+    --code: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151b;
+      --surface: #181e26;
+      --text: #e6eaf0;
+      --muted: #9aa5b5;
+      --line: #2a323e;
+      --accent: #5b9be0;
+      --accent-strong: #7db0ea;
+      --code: #222a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+  }
+  a { color: var(--accent); }
+  a:hover { color: var(--accent-strong); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  header.top .wrap { display: flex; align-items: center; gap: 12px; height: 58px; }
+  header.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; color: var(--text); }
+  header.top nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+  header.top nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
+  header.top nav a:hover { color: var(--text); }
+  .hero { padding: 72px 0 40px; text-align: center; }
+  .hero h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.1; margin: 18px 0 14px; letter-spacing: -0.02em; }
+  .hero h1 span { color: var(--accent); }
+  .hero p.lead { font-size: clamp(18px, 2.4vw, 21px); color: var(--muted); max-width: 720px; margin: 0 auto 30px; }
+  .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 12px 22px; border-radius: 10px; font-weight: 600;
+    text-decoration: none; border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-strong); color: #fff; }
+  .btn:hover { border-color: var(--accent); }
+  .tags { margin-top: 18px; color: var(--muted); font-size: 14px; }
+  .shot { margin: 40px auto 0; max-width: 1000px; }
+  .shot img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0,0,0,.18); }
+  section { padding: 64px 0; border-top: 1px solid var(--line); }
+  section h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.2; margin: 0 0 18px; letter-spacing: -0.01em; }
+  section h3 { margin: 28px 0 8px; font-size: 20px; }
+  .prose { max-width: 760px; }
+  .prose p { margin: 0 0 16px; }
+  .eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
+  blockquote {
+    margin: 26px 0; padding: 18px 22px; border-left: 4px solid var(--highlight);
+    background: var(--surface); border-radius: 0 10px 10px 0; font-size: 19px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 28px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; }
+  .card h3 { margin: 0 0 6px; font-size: 18px; }
+  .card p { margin: 0; color: var(--muted); font-size: 16px; }
+  .compare { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 16px; background: var(--surface); border-radius: 12px; overflow: hidden; }
+  .compare th, .compare td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .compare th { background: var(--code); font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .compare td:first-child { font-weight: 600; }
+  .yes { color: #1e8e4a; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .yes { color: #5fd08c; } }
+  .table-scroll { overflow-x: auto; }
+  code { background: var(--code); padding: 2px 6px; border-radius: 5px; font-size: .92em; }
+  pre { background: var(--code); padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 15px; }
+  ol.steps { padding-left: 22px; }
+  ol.steps li { margin-bottom: 8px; }
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; margin-top: 24px; }
+  .dl { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .dl h3 { margin: 0; }
+  .dl p { margin: 0; color: var(--muted); font-size: 15px; flex: 1; }
+  .note { color: var(--muted); font-size: 15px; }
+  footer { border-top: 1px solid var(--line); padding: 36px 0 60px; color: var(--muted); font-size: 14px; }
+  footer p { margin: 6px 0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg width="30" height="30" viewBox="0 0 128 128" aria-hidden="true">
+        <rect x="8" y="8" width="112" height="112" rx="24" fill="#2563a8"/>
+        <rect x="20" y="34" width="92" height="16" rx="3" fill="#f2f5f8"/>
+        <path d="M20 34h18v62l-9 10-9-10z" fill="#f2f5f8"/>
+        <path d="M58 28h22v28h-4v40l-9 10-9-10z" fill="#ffb02e"/>
+      </svg>
+      OpenCaliper
+    </a>
+    <nav>
+      <a href="#why">Why</a>
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#license">License</a>
+      <a href="https://github.com/engineer948/Open-Caliper">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero wrap">
+    <svg width="84" height="84" viewBox="0 0 128 128" aria-hidden="true">
+      <rect x="8" y="8" width="112" height="112" rx="24" fill="#2563a8"/>
+      <rect x="20" y="34" width="92" height="16" rx="3" fill="#f2f5f8"/>
+      <g stroke="#2563a8" stroke-width="2">
+        <line x1="44" y1="34" x2="44" y2="42"/><line x1="52" y1="34" x2="52" y2="40"/>
+        <line x1="60" y1="34" x2="60" y2="42"/><line x1="68" y1="34" x2="68" y2="40"/>
+        <line x1="76" y1="34" x2="76" y2="42"/><line x1="84" y1="34" x2="84" y2="40"/>
+        <line x1="92" y1="34" x2="92" y2="42"/><line x1="100" y1="34" x2="100" y2="40"/>
+      </g>
+      <path d="M20 34h18v62l-9 10-9-10z" fill="#f2f5f8"/>
+      <path d="M58 28h22v28h-4v40l-9 10-9-10z" fill="#ffb02e"/>
+    </svg>
+    <h1>CAD that <span>belongs to you</span>.</h1>
+    <p class="lead">
+      OpenCaliper is a free, open-source parametric 3D CAD program. No subscription,
+      no account, no cloud. Your designs are files on your own computer, in open
+      formats, and nobody can take them away.
+    </p>
+    <div class="buttons">
+      <a class="btn primary" href="#download">Download for free</a>
+      <a class="btn" href="https://github.com/engineer948/Open-Caliper">Source code on GitHub</a>
+    </div>
+    <p class="tags">Linux &middot; Windows &middot; MIT licensed &middot; works offline</p>
+    <div class="shot">
+      <img src="screenshot.png" alt="OpenCaliper with a part made of a sketch, an extrusion and a fillet" width="1400" height="860">
+    </div>
+  </div>
+
+  <section id="why">
+    <div class="wrap prose">
+      <div class="eyebrow">Why OpenCaliper exists</div>
+      <h2>Your tools should work for you, not for a business model.</h2>
+
+      <p>
+        Design software used to be something you bought. You paid once, installed it,
+        and it was yours for as long as your computer ran. Over the last decade much of
+        the professional CAD world quietly changed that deal. Programs became
+        services. Licences became monthly subscriptions. Files moved from your disk to
+        someone else's servers. Features that were free became paid tiers, and the
+        rules of the free tiers changed whenever the business needed them to.
+      </p>
+      <p>
+        For a large company this may be a reasonable trade. For a student, a maker with
+        a 3D printer, a small workshop, a hobby engineer or anyone who simply wants to
+        design a bracket on a Sunday afternoon, it often is not. You end up renting the
+        ability to open your own work. Stop paying, lose your account, or watch the
+        vendor change its terms, and the drawings you made yourself can become hard to
+        reach.
+      </p>
+
+      <blockquote>
+        A design you made should be yours in the most practical sense: a file you can
+        open, copy, back up and keep using in ten years, without asking anyone's
+        permission.
+      </blockquote>
+
+      <p>
+        OpenCaliper is a small answer to that. It is not trying to compete with large
+        commercial packages feature for feature. It is trying to get the basics of
+        parametric design right (sketches, constraints, features, an editable history)
+        in a program that is entirely in your hands.
+      </p>
+
+      <h3>What "belongs to you" means here</h3>
+      <p>
+        <strong>No subscription and no licence server.</strong> There is nothing to
+        renew, no trial that runs out and no "your seat has expired" message. You
+        download it once and it keeps working.
+      </p>
+      <p>
+        <strong>No account and no cloud.</strong> OpenCaliper does not ask you to sign
+        in and does not connect to the internet. It contains no network code at all.
+        Your projects are saved where you choose, as ordinary files.
+      </p>
+      <p>
+        <strong>Open, readable files.</strong> Projects are saved as <code>.ocal</code>
+        files, which are plain JSON: you can open one in a text editor and see your
+        sketches, dimensions and steps. Finished parts are exported as STEP (an ISO
+        standard every serious CAD program reads), IGES, STL or OBJ. Your work never
+        depends on OpenCaliper continuing to exist.
+      </p>
+      <p>
+        <strong>Open source, for good.</strong> The full source code is public under the
+        MIT licence. Anyone can read it, check what it does, fix it, build it themselves
+        or continue it if the original author stops. A program whose source is public
+        cannot be locked away later.
+      </p>
+      <p>
+        <strong>Free for any use, including commercial.</strong> You may use OpenCaliper
+        to design parts you sell. There are no "non-commercial only" strings and no
+        revenue limits. The parts you design are yours.
+      </p>
+
+      <h3>Standing on open shoulders</h3>
+      <p>
+        Building a geometry kernel from scratch takes decades, so OpenCaliper does not
+        try to. It is built on <a href="https://github.com/Open-Cascade-SAS/OCCT">Open
+        CASCADE Technology</a>, an open-source 3D modelling kernel with a long history in
+        engineering software, and on <a href="https://www.qt.io">Qt</a> for its
+        interface. Both are open source under the LGPL. OpenCaliper's own contribution
+        is the part in between: the sketcher and its constraint solver, the feature
+        timeline, the file formats and the interface that ties them together.
+      </p>
+
+      <h3>Honest about where it stands</h3>
+      <p>
+        OpenCaliper is young. Version 0.1 covers single parts: sketching, extrude,
+        revolve, fillet, chamfer, booleans and an editable history. It does not yet do
+        assemblies, drawings, sheet metal or simulation, and it does not pretend to. If
+        you need those today, use whatever tool does them for you. If you want simple,
+        precise parts in a program that respects you, OpenCaliper is for you, and it will
+        grow with the people who use it.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="eyebrow">At a glance</div>
+      <h2>What you give up with rented CAD, and what you keep here.</h2>
+      <div class="table-scroll">
+        <table class="compare">
+          <thead>
+            <tr><th></th><th>Typical subscription CAD</th><th>OpenCaliper</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Price</td><td>Monthly or yearly fee; free tiers with conditions that can change</td><td class="yes">Free, forever</td></tr>
+            <tr><td>Account</td><td>Usually required, often online sign-in</td><td class="yes">None</td></tr>
+            <tr><td>Internet</td><td>Often needed to start, save or sync</td><td class="yes">Never needed</td></tr>
+            <tr><td>Where files live</td><td>Often on the vendor's cloud</td><td class="yes">On your disk, where you choose</td></tr>
+            <tr><td>Project format</td><td>Proprietary</td><td class="yes">Plain JSON, documented in the source</td></tr>
+            <tr><td>Export</td><td>Sometimes limited in free tiers</td><td class="yes">STEP, IGES, STL, OBJ, BREP, always</td></tr>
+            <tr><td>Commercial use</td><td>Often needs a paid licence</td><td class="yes">Allowed (MIT)</td></tr>
+            <tr><td>Source code</td><td>Closed</td><td class="yes">Open, on GitHub</td></tr>
+            <tr><td>Feature depth</td><td>Very large</td><td>Focused on the essentials, growing</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="eyebrow">Features</div>
+      <h2>Real parametric modelling, without the weight.</h2>
+      <p class="prose">
+        Parametric means every part is built from steps that remember their values.
+        Make a plate 10&nbsp;mm thick, round its corners, drill a hole; later change the
+        thickness to 15&nbsp;mm and everything after it rebuilds itself.
+      </p>
+      <div class="grid">
+        <div class="card"><h3>2D sketches</h3><p>Lines, circles and arcs on the origin planes or on any flat face of your part, snapping to a grid and to existing points.</p></div>
+        <div class="card"><h3>Constraints and dimensions</h3><p>Coincident, horizontal, vertical, parallel, perpendicular, tangent, equal and fix, plus exact lengths, radii and distances. Drag a point and the sketch follows the rules.</p></div>
+        <div class="card"><h3>Solids from sketches</h3><p>Extrude and revolve as a new body, or join, cut and intersect with what you already have. Loops inside loops become holes automatically.</p></div>
+        <div class="card"><h3>Fillets and chamfers</h3><p>Click edges and round them or bevel them to the size you type in.</p></div>
+        <div class="card"><h3>Editable timeline</h3><p>Every step is listed. Double-click one to change it, edit an old sketch, delete a step, and the rest of the part rebuilds. Undo and redo included.</p></div>
+        <div class="card"><h3>Open file formats</h3><p>Save projects as readable <code>.ocal</code> files. Export STEP, IGES, STL, OBJ and BREP; import STEP, IGES and BREP.</p></div>
+        <div class="card"><h3>Calm interface</h3><p>A clean 3D view with a clickable view cube, standard views on number keys, and drawing tools that only appear while you sketch.</p></div>
+        <div class="card"><h3>Private by design</h3><p>No telemetry, no sign-in, no network access. What you design on your computer stays on your computer.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap prose">
+      <div class="eyebrow">Your first part in two minutes</div>
+      <h2>From sketch to solid</h2>
+      <ol class="steps">
+        <li>Click <strong>Sketch XY</strong> to start drawing on the ground plane.</li>
+        <li>Press <strong>L</strong> and click corner after corner; click the first point again to close the shape. Press <strong>C</strong> for a circle inside it.</li>
+        <li>Press <strong>Esc</strong> twice to select, click a line and press <strong>D</strong> to give it an exact length.</li>
+        <li>Click <strong>Finish</strong>, then <strong>Extrude</strong> and type a thickness. The circle becomes a hole.</li>
+        <li>Click an edge of the part and choose <strong>Fillet</strong> to round it.</li>
+        <li>Double-click <strong>Extrude</strong> in the timeline, change the thickness and watch the part update.</li>
+        <li><strong>File &rarr; Export</strong> as STL for your 3D printer or STEP for any other CAD program.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <div class="eyebrow">Download</div>
+      <h2>Free, for Linux and Windows</h2>
+      <div class="downloads">
+        <div class="dl">
+          <h3>Linux: AppImage</h3>
+          <p>One file, nothing to install. Works on Ubuntu 22.04+, Linux Mint 21+, Debian 12+, Fedora 36+, Arch, openSUSE Tumbleweed and most other current distributions.</p>
+          <a class="btn primary" href="https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper-x86_64.AppImage">OpenCaliper-x86_64.AppImage</a>
+        </div>
+        <div class="dl">
+          <h3>Linux: Flatpak</h3>
+          <p>Works on practically every distribution, including older ones, RHEL 9, openSUSE Leap and immutable systems like Silverblue. Install with <code>flatpak install --user OpenCaliper.flatpak</code>.</p>
+          <a class="btn primary" href="https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper.flatpak">OpenCaliper.flatpak</a>
+        </div>
+        <div class="dl">
+          <h3>Windows 10 / 11</h3>
+          <p>64-bit. Unzip and run <code>OpenCaliper.exe</code>. The program is not code-signed yet, so SmartScreen may ask you to confirm with "More info" &rarr; "Run anyway".</p>
+          <a class="btn primary" href="https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.zip">OpenCaliper-windows-x64.zip</a>
+        </div>
+      </div>
+      <p class="note" style="margin-top:20px">
+        To run the AppImage: <code>chmod +x OpenCaliper-x86_64.AppImage</code> and then
+        <code>./OpenCaliper-x86_64.AppImage</code>. Ubuntu 24.04 and newer also need
+        <code>sudo apt install libfuse2t64</code>. All systems need a graphics driver with
+        OpenGL 3.3 or newer. Older versions and release notes are on the
+        <a href="https://github.com/engineer948/Open-Caliper/releases">releases page</a>.
+      </p>
+    </div>
+  </section>
+
+  <section id="license">
+    <div class="wrap prose">
+      <div class="eyebrow">License</div>
+      <h2>Open source, with nothing hidden</h2>
+      <p>
+        OpenCaliper's own code is released under the
+        <a href="https://github.com/engineer948/Open-Caliper/blob/main/LICENSE">MIT licence</a>.
+        You may use it for any purpose, including commercial work, and copy, change and
+        share it, as long as the copyright notice stays with it. It comes without
+        warranty.
+      </p>
+      <p>
+        The libraries it is built on keep their own open-source licences: Open CASCADE
+        Technology (LGPL 2.1 with the Open CASCADE exception), Qt (LGPL 3) and FreeType
+        (FreeType Licence), along with smaller libraries under MIT, BSD and similar
+        terms. The full list and texts are in
+        <a href="https://github.com/engineer948/Open-Caliper/blob/main/THIRD-PARTY-NOTICES.md">THIRD-PARTY-NOTICES.md</a>
+        and inside the program under <strong>Help &rarr; Licenses</strong>.
+      </p>
+      <p>
+        Want to help? Report a problem or suggest an idea in the
+        <a href="https://github.com/engineer948/Open-Caliper/issues">issue tracker</a>, or
+        read the code and send a pull request. Every bit of help keeps good design tools
+        free for everyone.
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>OpenCaliper &copy; 2026 engineer948 and contributors &middot; MIT licence &middot; <a href="https://github.com/engineer948/Open-Caliper">GitHub</a></p>
+    <p>This software makes use of, and is based on facilities provided by, the Open CASCADE Technology software. Built with Qt.</p>
+    <p>OpenCaliper is an independent project and is not affiliated with or endorsed by any commercial CAD vendor. All trademarks belong to their owners.</p>
+  </div>
+</footer>
+
+</body>
+</html>
