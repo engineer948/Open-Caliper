@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- OpenCaliper: a vernier caliper over a blue tile -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#2563a8"/>
+  <!-- beam with scale ticks -->
+  <rect x="20" y="34" width="92" height="16" rx="3" fill="#f2f5f8"/>
+  <g stroke="#2563a8" stroke-width="2">
+    <line x1="44" y1="34" x2="44" y2="42"/>
+    <line x1="52" y1="34" x2="52" y2="40"/>
+    <line x1="60" y1="34" x2="60" y2="42"/>
+    <line x1="68" y1="34" x2="68" y2="40"/>
+    <line x1="76" y1="34" x2="76" y2="42"/>
+    <line x1="84" y1="34" x2="84" y2="40"/>
+    <line x1="92" y1="34" x2="92" y2="42"/>
+    <line x1="100" y1="34" x2="100" y2="40"/>
+  </g>
+  <!-- fixed jaw -->
+  <path d="M20 34 h18 v62 l-9 10 l-9 -10 z" fill="#f2f5f8"/>
+  <!-- sliding jaw -->
+  <path d="M58 28 h22 v28 h-4 v40 l-9 10 l-9 -10 z" fill="#ffb02e"/>
+</svg>

@@ -1,0 +1,47 @@
+# Builds a standalone OpenCaliper.flatpak bundle (not published on Flathub).
+# Easiest: packaging/flatpak/build-flatpak.sh   (CI: .github/workflows/build.yml)
+app-id: io.github.engineer948.OpenCaliper
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: opencaliper
+finish-args:
+  - --share=ipc
+  # OCCT renders through GLX, so the app runs on X11 (XWayland on Wayland desktops).
+  - --socket=x11
+  - --device=dri
+  # Open/save projects and exports anywhere in the home folder.
+  - --filesystem=home
+
+modules:
+  - name: occt
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_MODULE_Draw=OFF
+      - -DBUILD_DOC_Overview=OFF
+      - -DUSE_FREETYPE=ON
+      - -DUSE_TK=OFF
+    sources:
+      - type: git
+        url: https://github.com/Open-Cascade-SAS/OCCT.git
+        tag: V7_9_3
+    cleanup:
+      - /include
+      - /lib/cmake
+      - /bin
+
+  - name: opencaliper
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - build-flatpak
+          - .flatpak-builder
+          - dist

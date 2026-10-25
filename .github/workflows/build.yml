@@ -1,0 +1,112 @@
+# Builds OpenCaliper for Linux (AppImage + .flatpak) and Windows (.zip).
+# Every push/PR: downloadable from the workflow run's "Artifacts".
+# Pushing a tag like v0.1.0: also published as a GitHub Release, so the
+# README's .../releases/latest/download/... links point to the new files.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04 # old glibc = runs on more distributions
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache OpenCASCADE build
+        uses: actions/cache@v4
+        with:
+          path: packaging/appimage/.cache
+          key: appimage-occt-V7_9_3
+      - name: Build AppImage
+        run: SRC="$GITHUB_WORKSPACE" bash packaging/appimage/inside-container.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCaliper-x86_64.AppImage
+          path: dist/OpenCaliper-x86_64.AppImage
+
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: OpenCaliper.flatpak
+          manifest-path: packaging/flatpak/io.github.engineer948.OpenCaliper.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/*.yml') }}
+
+  windows:
+    runs-on: windows-latest
+    env:
+      # OpenCASCADE takes ~1 hour to compile; vcpkg's binary cache keeps it between runs.
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-bincache,readwrite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+      - name: Configure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vcpkg-bincache | Out-Null
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "OpenCaliper"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build\opencaliper.exe $out\OpenCaliper.exe
+          # vcpkg copies OCCT and its dependency DLLs next to the exe
+          Copy-Item build\*.dll $out\
+          windeployqt --release --no-translations $out\OpenCaliper.exe
+          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md, README.md $out\
+          Copy-Item -Recurse LICENSES $out\
+          Compress-Archive -Path $out -DestinationPath OpenCaliper-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCaliper-windows-x64.zip
+          path: OpenCaliper-windows-x64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [appimage, flatpak, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4 # for RELEASE_NOTES.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: OpenCaliper ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            artifacts/**/OpenCaliper-x86_64.AppImage
+            artifacts/**/OpenCaliper.flatpak
+            artifacts/**/OpenCaliper-windows-x64.zip

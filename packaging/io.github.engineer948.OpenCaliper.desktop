@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenCaliper
+GenericName=Parametric 3D CAD
+Comment=Design parts with sketches, constraints and features
+Exec=opencaliper %f
+Icon=io.github.engineer948.OpenCaliper
+Categories=Graphics;Engineering;3DGraphics;
+Keywords=CAD;3D;STEP;STL;sketch;extrude;
+MimeType=application/x-opencaliper;
+Terminal=false

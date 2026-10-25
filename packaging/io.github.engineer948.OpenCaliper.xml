@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- File type for OpenCaliper projects, so .ocal files open with the app. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-opencaliper">
+    <comment>OpenCaliper project</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.ocal"/>
+    <icon name="io.github.engineer948.OpenCaliper"/>
+  </mime-type>
+</mime-info>
