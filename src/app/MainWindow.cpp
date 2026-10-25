@@ -30,6 +30,7 @@
 #include <QStatusBar>
 #include <QToolBar>
 
+#include <algorithm>
 #include <utility>
 
 using K = sketch::ConstraintKind;
@@ -183,6 +184,17 @@ void MainWindow::buildViewMenu() {
     m->addAction(a);
     if (i == 0) bar->addAction(a);
   }
+  m->addSeparator();
+  QAction* dims = action(tr("Show Dimensions"), "dimension", {}, tr("Hole diameters, sketch sizes and extrude depths.\nDouble-click one to change it."));
+  dims->setCheckable(true);
+  dims->setChecked(m_showDimensions);
+  connect(dims, &QAction::toggled, this, [this](bool on) {
+    m_showDimensions = on;
+    refreshScene();
+  });
+  m->addAction(dims);
+  bar->addAction(dims);
+  connect(m_viewer, &Viewer::doubleClicked, this, &MainWindow::editDimension);
 }
 
 void MainWindow::buildSketchUi() {
@@ -346,6 +358,7 @@ void MainWindow::buildHelpMenu() {
 void MainWindow::startSketch(const gp_Ax3& plane) {
   m_editingSketch = -1;
   m_viewer->context()->ClearSelected(false); // the picked face would stay highlighted
+  clearDimensions();
   m_editor->begin(plane);
   updateActions();
 }
@@ -505,6 +518,7 @@ void MainWindow::editFeature(int index) {
   if (const auto* s = m_doc.as<SketchFeature>(index)) {
     m_editingSketch = index;
     m_viewer->context()->ClearSelected(false);
+    clearDimensions();
     m_editor->begin(s->plane, s->sketch);
     updateActions();
   } else if (m_doc.as<ExtrudeFeature>(index)) {
@@ -562,7 +576,7 @@ bool MainWindow::addFeature(std::unique_ptr<Feature> feature) {
   }
   documentChanged();
   if (firstBody && !m_doc.body().IsNull()) m_viewer->fitAll();
-  hint(tr("%1 added. Double-click it in the timeline to change it.").arg(name));
+  hint(tr("%1 added. Double-click it in the timeline, or a dimension in the view, to change it.").arg(name));
   return true;
 }
 
@@ -762,7 +776,46 @@ void MainWindow::refreshScene() {
     ctx->Display(ais, AIS_WireFrame, 0, false);
     m_sketchAis.emplace_back(ais, int(i));
   }
+
+  clearDimensions();
+  if (m_showDimensions && !m_editor->isActive()) {
+    m_dimensions = buildDimensions(m_doc);
+    for (const auto& [dim, ref] : m_dimensions) {
+      dim->SetZLayer(Graphic3d_ZLayerId_Topmost); // readable even behind or inside the part
+      ctx->Display(dim, 0, 0, false);
+    }
+  }
   m_viewer->redraw();
+}
+
+void MainWindow::clearDimensions() {
+  const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
+  for (const auto& [dim, ref] : m_dimensions) ctx->Remove(dim, false);
+  m_dimensions.clear();
+}
+
+void MainWindow::editDimension() {
+  const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
+  if (!ctx->HasDetected() || m_editor->isActive()) return;
+  const auto it = std::find_if(m_dimensions.begin(), m_dimensions.end(),
+                               [&](const auto& d) { return d.first == ctx->DetectedInteractive(); });
+  if (it == m_dimensions.end()) return;
+  const DimensionRef ref = it->second; // refreshScene below replaces the list
+
+  QString label = tr("Length:");
+  if (ref.kind == DimensionRef::Kind::ExtrudeDepth) label = tr("Depth:");
+  else if (ref.kind == DimensionRef::Kind::SketchCurve) label = ref.diameter ? tr("Diameter:") : tr("Radius:");
+  FormDialog dlg(this, tr("Change Dimension"));
+  QDoubleSpinBox* value = dlg.number(label, ref.value, 0.001, 1e6, " mm");
+  if (!dlg.run()) return;
+
+  std::string error;
+  std::unique_ptr<Feature> changed = applyDimension(m_doc, ref, value->value(), error);
+  if (!changed) {
+    QMessageBox::warning(this, tr("Change Dimension"), QString::fromStdString(error));
+    return;
+  }
+  replaceFeature(ref.feature, std::move(changed));
 }
 
 QString MainWindow::describe(size_t i) const {

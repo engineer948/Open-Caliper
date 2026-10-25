@@ -93,7 +93,19 @@ jobs:
           Copy-Item build\opencaliper.exe $out\OpenCaliper.exe
           # vcpkg copies OCCT and its dependency DLLs next to the exe
           Copy-Item build\*.dll $out\
-          windeployqt --release --no-translations $out\OpenCaliper.exe
+          windeployqt --release --no-translations --no-compiler-runtime $out\OpenCaliper.exe
+          # The C++ runtime goes next to the exe (allowed by Microsoft), so users
+          # never have to install vc_redist.exe themselves.
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) { throw "MSVC runtime not found under $env:VCToolsRedistDir" }
+          Copy-Item "$($crt.FullName)\*.dll" $out\
+          # OpenCaliper never uses the network; drop what windeployqt adds for it,
+          # unless something really links Qt6Network.
+          Remove-Item -Recurse -Force $out\tls, $out\networkinformation -ErrorAction SilentlyContinue
+          $users = Get-ChildItem $out -Recurse -Include *.exe, *.dll |
+            Where-Object { $_.Name -ne "Qt6Network.dll" -and (dumpbin /dependents $_.FullName | Select-String -SimpleMatch "Qt6Network.dll") }
+          if ($users) { Write-Host "Keeping Qt6Network.dll, needed by: $($users.Name -join ', ')" }
+          else { Remove-Item -Force $out\Qt6Network.dll -ErrorAction SilentlyContinue }
           Copy-Item LICENSE, THIRD-PARTY-NOTICES.md, README.md $out\
           Copy-Item -Recurse LICENSES $out\
           Compress-Archive -Path $out -DestinationPath OpenCaliper-windows-x64.zip

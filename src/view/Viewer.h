@@ -44,6 +44,11 @@ public:
   void lookAt(const gp_Ax3& plane, double size);
   void setStandardView(V3d_TypeOfOrientation orientation); // animated
 
+signals:
+  // Left double-click outside sketch mode; the object under the mouse is
+  // context()->DetectedInteractive().
+  void doubleClicked();
+
 protected:
   void initializeGL() override;
   void paintGL() override;
@@ -52,6 +57,7 @@ protected:
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
   void wheelEvent(QWheelEvent*) override;
+  void mouseDoubleClickEvent(QMouseEvent*) override;
   void keyPressEvent(QKeyEvent*) override;
 
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx,

@@ -273,6 +273,11 @@ void Viewer::mouseMoveEvent(QMouseEvent* e) {
     update();
 }
 
+void Viewer::mouseDoubleClickEvent(QMouseEvent* e) {
+  mousePressEvent(e); // Qt sends this instead of the second press
+  if (!m_handler && e->button() == Qt::LeftButton) emit doubleClicked();
+}
+
 void Viewer::wheelEvent(QWheelEvent* e) {
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(toPixels(e->position()), delta)))

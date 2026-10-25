@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/Dimensions.h"
 #include "model/Document.h"
 #include "sketch/SketchEditor.h"
 
@@ -75,6 +76,8 @@ private:
 
   // display
   void refreshScene();
+  void clearDimensions();
+  void editDimension(); // the dimension under the mouse (double-click)
   void refreshTimeline();
   void updateActions();
   void hint(const QString& text);
@@ -99,4 +102,6 @@ private:
 
   Handle(AIS_Shape) m_bodyAis;
   std::vector<std::pair<Handle(AIS_Shape), int>> m_sketchAis; // shown sketch -> history index
+  DimensionList m_dimensions;
+  bool m_showDimensions = true;
 };

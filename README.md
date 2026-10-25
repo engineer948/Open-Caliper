@@ -11,6 +11,8 @@ Every step stays editable in the timeline.
   vertical, parallel, perpendicular, tangent, equal, fix) and dimensions
 - Extrude, revolve, fillet, chamfer; join, cut, intersect
 - Sketch on the origin planes or on any flat face of the part
+- Dimensions on the model: hole diameters, sketch sizes and extrude depths;
+  double-click one to change it and the part rebuilds
 - Editable history timeline, undo and redo
 - Export STEP, IGES, STL, OBJ, BREP; import STEP, IGES, BREP
 - Linux and Windows
@@ -86,7 +88,8 @@ publisher, choose "More info" → "Run anyway". The program is not code-signed.
    an exact length.
 4. **Finish** (Ctrl+Enter), then **Extrude** and enter a distance.
 5. Click an edge of the part, then **Fillet** to round it.
-6. Double-click any step in the **Timeline** to change it later.
+6. Double-click a dimension on the part (for example the hole's **Ø**) or any
+   step in the **Timeline** to change it later.
 
 Mouse: left drag rotates, middle drag pans, the wheel zooms, **F** fits the
 view, **0/1/2/3** select iso/front/top/right. The cube in the corner is

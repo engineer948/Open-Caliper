@@ -24,6 +24,9 @@ in the README.
 - **Build solids**: extrude and revolve, as a new body, joined, cut or
   intersected. Closed loops inside other loops become holes.
 - **Finish edges** with fillets (rounded) and chamfers (bevelled).
+- **Dimensions on the part**: hole diameters, arc radii, the sizes you gave in
+  sketches and extrude depths are shown on the model. Double-click one, type a
+  new value, and the part rebuilds. View > Show Dimensions turns them off.
 - **Change your mind**: every step is in the timeline; double-click it to
   change a value or edit its sketch, and everything after it updates. Undo and
   redo with Ctrl+Z / Ctrl+Y.

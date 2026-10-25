@@ -39,6 +39,7 @@ add_executable(opencaliper
   src/app/Icons.cpp
   src/app/ProjectFile.cpp
   src/app/LicensesDialog.cpp
+  src/app/Dimensions.cpp
   src/view/Viewer.cpp
   src/sketch/SketchEditor.cpp
 )
@@ -78,6 +79,9 @@ add_test(NAME model_tests COMMAND model_tests)
 add_executable(project_tests tests/project_tests.cpp src/app/ProjectFile.cpp)
 target_link_libraries(project_tests PRIVATE cadcore Qt6::Core)
 add_test(NAME project_tests COMMAND project_tests)
+add_executable(dimension_tests tests/dimension_tests.cpp src/app/Dimensions.cpp)
+target_link_libraries(dimension_tests PRIVATE cadcore TKService TKV3d)
+add_test(NAME dimension_tests COMMAND dimension_tests)
 
 include(GNUInstallDirs)
 install(TARGETS opencaliper RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
