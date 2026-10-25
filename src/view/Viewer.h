@@ -3,6 +3,7 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_ViewController.hxx>
 #include <AIS_ViewCube.hxx>
+#include <Graphic3d_Vec2.hxx>
 #include <V3d_View.hxx>
 #include <gp_Ax3.hxx>
 #include <QOpenGLWidget>

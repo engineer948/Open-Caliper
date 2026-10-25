@@ -45,8 +45,10 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      # OpenCASCADE takes ~1 hour to compile; vcpkg's binary cache keeps it between runs.
+      # OpenCASCADE takes hours to compile here; vcpkg's binary cache keeps it between runs.
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-bincache,readwrite
+      # Release-only libraries: half the build time, the app is built in Release anyway.
+      VCPKG_TRIPLET: x64-windows-release
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
@@ -56,20 +58,29 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
       - name: Restore vcpkg cache
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: vcpkg-bincache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-
-      - name: Configure
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ env.VCPKG_TRIPLET }}-
+      - name: Configure (vcpkg builds OpenCASCADE here)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force vcpkg-bincache | Out-Null
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+      # Saved right after vcpkg, even if a later step fails, so a failing app
+      # build never throws away hours of OpenCASCADE compilation.
+      - name: Save vcpkg cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
       - name: Build
         run: cmake --build build
       - name: Test

@@ -5,6 +5,9 @@
 #include "view/Viewer.h"
 
 #include <Aspect_DisplayConnection.hxx>
+#include <Aspect_ScrollDelta.hxx>
+#include <Aspect_VKeyFlags.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Aspect_NeutralWindow.hxx>
 #include <Font_FontMgr.hxx>
 #include <Message.hxx>
@@ -105,7 +108,7 @@ Viewer::Viewer(QWidget* parent) : QOpenGLWidget(parent) {
   m_view->SetImmediateUpdate(false);
   m_view->SetBgGradientColors(Quantity_Color(0.20, 0.22, 0.25, Quantity_TOC_sRGB),
                               Quantity_Color(0.55, 0.58, 0.62, Quantity_TOC_sRGB),
-                              Aspect_GFM_VER);
+                              Aspect_GradientFillMethod_Vertical);
 
   // Clickable navigation cube in the top right corner (also shows the axes).
   m_viewCube = new AIS_ViewCube();

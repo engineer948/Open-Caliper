@@ -218,10 +218,10 @@ void Document::regenerate(size_t from) {
     try {
       m_bodies[i] = m_history[i]->build(*this, before);
       m_errors[i].clear();
+    } catch (const Standard_Failure& e) { // first: in OCCT 8 it is a std::exception
+      m_errors[i] = std::string("Geometry kernel error: ") + e.GetMessageString();
     } catch (const std::exception& e) {
       m_errors[i] = e.what();
-    } catch (const Standard_Failure& e) {
-      m_errors[i] = std::string("Geometry kernel error: ") + e.GetMessageString();
     }
   }
 }
