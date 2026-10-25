@@ -1,4 +1,16 @@
-## OpenCaliper 0.1.0: first release
+## OpenCaliper 0.1.1
+
+### What's new since 0.1.0
+
+- **Dimensions on the part.** Hole diameters, arc radii, the sizes you gave in
+  sketches and extrude depths are now shown on the model. Double-click one,
+  type a new value and the part rebuilds. View > Show Dimensions turns them off.
+- **Simpler Windows package.** The Microsoft C++ runtime now ships next to
+  `OpenCaliper.exe`, so there is no separate `vc_redist.x64.exe` to install, and
+  the unused Qt network libraries are no longer included.
+- Windows builds with Open CASCADE 8.
+
+---
 
 OpenCaliper is a small, open-source parametric 3D CAD program for designing
 mechanical parts and objects for 3D printing.
