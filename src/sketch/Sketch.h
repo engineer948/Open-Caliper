@@ -21,6 +21,7 @@ struct Entity {
   EntityKind kind;
   int p[3] = {-1, -1, -1};
   int r = -1;
+  bool construction = false; // helper geometry: constrains, but never becomes a solid
 };
 
 enum class ConstraintKind {

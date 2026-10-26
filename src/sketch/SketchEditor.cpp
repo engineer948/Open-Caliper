@@ -4,12 +4,15 @@
 #include <Aspect_Grid.hxx>
 #include <BRep_Builder.hxx>
 #include <Prs3d_Drawer.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <V3d_Viewer.hxx>
 
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QMouseEvent>
+
+#include <map>
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +38,10 @@ Handle(AIS_Shape) makeLayer(const Handle(AIS_InteractiveContext)& ctx, Quantity_
   return ais;
 }
 
+constexpr size_t kMaxUndo = 200;
+
+QString num(double v) { return QString::number(v, 'g', 6); }
+
 double segmentDistance(double px, double py, double ax, double ay, double bx, double by) {
   const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
   double t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
@@ -49,12 +56,16 @@ SketchEditor::SketchEditor(Viewer* viewer, QObject* parent) : QObject(parent), m
 void SketchEditor::begin(const gp_Ax3& plane, Sketch initial) {
   m_sketch = std::move(initial);
   m_plane = plane;
+  m_undo.clear();
+  m_redo.clear();
   m_picks.clear();
   m_selection.clear();
   m_active = true;
 
   const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
   m_aisNormal = makeLayer(ctx, Quantity_NOC_BLUE3, 2.0);
+  m_aisConstruction = makeLayer(ctx, Quantity_NOC_SLATEGRAY, 1.5);
+  m_aisConstruction->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_SLATEGRAY, Aspect_TOL_DASH, 1.5));
   m_aisSelected = makeLayer(ctx, Quantity_NOC_ORANGE, 3.0);
   m_aisPreview = makeLayer(ctx, Quantity_NOC_GRAY30, 1.0);
 
@@ -80,10 +91,15 @@ Sketch SketchEditor::finish() {
   m_viewer->unsetCursor();
   m_viewer->v3dViewer()->DeactivateGrid();
   const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
-  for (Handle(AIS_Shape)* ais : {&m_aisNormal, &m_aisSelected, &m_aisPreview}) {
+  for (Handle(AIS_Shape)* ais : {&m_aisNormal, &m_aisConstruction, &m_aisSelected, &m_aisPreview}) {
     ctx->Remove(*ais, false);
     ais->Nullify();
   }
+  for (const auto& label : m_labels) ctx->Remove(label, false);
+  m_labels.clear();
+  m_undo.clear();
+  m_redo.clear();
+  emit historyChanged();
   m_viewer->redraw();
   return std::exchange(m_sketch, {});
 }
@@ -199,6 +215,7 @@ void SketchEditor::toolClick(const Pick& pick) {
       return;
     }
     const bool closesChain = k[1].point >= 0; // ended on an existing point
+    remember();
     const int a = resolve(k[0]), b = resolve(k[1]);
     const int line = m_sketch.addLine(a, b);
     // Like Fusion: exactly axis-aligned lines get a constraint for free.
@@ -210,14 +227,33 @@ void SketchEditor::toolClick(const Pick& pick) {
   case Tool::Circle: {
     if (k.size() < 2) return;
     const double r = std::hypot(k[1].u - k[0].u, k[1].v - k[0].v);
-    if (r > 1e-9) m_sketch.addCircle(resolve(k[0]), r);
+    if (r > 1e-9) {
+      remember();
+      m_sketch.addCircle(resolve(k[0]), r);
+    }
     m_picks.clear();
     break;
   }
+  case Tool::Rectangle: // two opposite corners
+    if (k.size() < 2) return;
+    addRectangle(k[0], k[1]);
+    m_picks.clear();
+    break;
+  case Tool::Polygon: // centre, then a corner
+    if (k.size() < 2) return;
+    addPolygon(k[0], k[1]);
+    m_picks.clear();
+    break;
+  case Tool::Slot: // centre of each end, then the width
+    if (k.size() < 3) return;
+    addSlot(k[0], k[1], k[2]);
+    m_picks.clear();
+    break;
   case Tool::Arc: { // center, start, end
     if (k.size() < 3) return;
     const double r = std::hypot(k[1].u - k[0].u, k[1].v - k[0].v);
     if (r > 1e-9) {
+      remember();
       const int c = resolve(k[0]), s = resolve(k[1]);
       int e = k[2].point;
       if (e < 0) { // put a free end exactly on the circle
@@ -238,6 +274,95 @@ void SketchEditor::toolClick(const Pick& pick) {
   redraw();
 }
 
+void SketchEditor::addRectangle(const Pick& a, const Pick& b) {
+  if (std::abs(b.u - a.u) < 1e-9 || std::abs(b.v - a.v) < 1e-9) return;
+  remember();
+  const int p0 = resolve(a), p2 = resolve(b);
+  const int p1 = m_sketch.addPoint(b.u, a.v), p3 = m_sketch.addPoint(a.u, b.v);
+  m_sketch.addConstraint({K::Horizontal, m_sketch.addLine(p0, p1)});
+  m_sketch.addConstraint({K::Vertical, m_sketch.addLine(p1, p2)});
+  m_sketch.addConstraint({K::Horizontal, m_sketch.addLine(p2, p3)});
+  m_sketch.addConstraint({K::Vertical, m_sketch.addLine(p3, p0)});
+}
+
+// Regular polygon: corners on a construction circle, all sides equal.
+void SketchEditor::addPolygon(const Pick& center, const Pick& corner) {
+  const double r = std::hypot(corner.u - center.u, corner.v - center.v);
+  if (r < 1e-9) return;
+  remember();
+  const int c = resolve(center);
+  const int circle = m_sketch.addCircle(c, r);
+  m_sketch.entities[circle].construction = true;
+  const double a0 = std::atan2(corner.v - center.v, corner.u - center.u);
+  std::vector<int> pts{resolve(corner)};
+  for (int i = 1; i < m_polygonSides; ++i) {
+    const double a = a0 + 2 * std::numbers::pi * i / m_polygonSides;
+    pts.push_back(m_sketch.addPoint(center.u + r * std::cos(a), center.v + r * std::sin(a)));
+  }
+  std::vector<int> sides;
+  for (int i = 0; i < m_polygonSides; ++i) {
+    sides.push_back(m_sketch.addLine(pts[i], pts[(i + 1) % m_polygonSides]));
+    m_sketch.addConstraint({K::PointOnCircle, pts[i], circle});
+  }
+  for (size_t i = 1; i < sides.size(); ++i) m_sketch.addConstraint({K::Equal, sides[0], sides[i]});
+  m_sketch.solve();
+}
+
+// Slot: two half circles joined by two tangent lines.
+void SketchEditor::addSlot(const Pick& c1, const Pick& c2, const Pick& side) {
+  const double dx = c2.u - c1.u, dy = c2.v - c1.v, len = std::hypot(dx, dy);
+  if (len < 1e-9) return;
+  const double nx = -dy / len, ny = dx / len; // left-hand normal of c1 -> c2
+  const double r = std::abs((side.u - c1.u) * nx + (side.v - c1.v) * ny);
+  if (r < 1e-9) return;
+  remember();
+  const int a = resolve(c1), b = resolve(c2);
+  const int a1 = m_sketch.addPoint(c1.u + nx * r, c1.v + ny * r), b1 = m_sketch.addPoint(c1.u - nx * r, c1.v - ny * r);
+  const int a2 = m_sketch.addPoint(c2.u + nx * r, c2.v + ny * r), b2 = m_sketch.addPoint(c2.u - nx * r, c2.v - ny * r);
+  const int top = m_sketch.addLine(a1, a2), bottom = m_sketch.addLine(b1, b2);
+  const int end2 = m_sketch.addArc(b, b2, a2), end1 = m_sketch.addArc(a, a1, b1); // counter-clockwise
+  for (int line : {top, bottom})
+    for (int arc : {end1, end2}) m_sketch.addConstraint({K::Tangent, line, arc});
+  m_sketch.addConstraint({K::Equal, end1, end2});
+  m_sketch.solve();
+}
+
+void SketchEditor::remember() {
+  m_undo.push_back(m_sketch);
+  if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+  m_redo.clear();
+  emit historyChanged();
+}
+
+void SketchEditor::forget() {
+  if (!m_undo.empty()) m_undo.pop_back();
+  emit historyChanged();
+}
+
+void SketchEditor::undo() {
+  if (m_undo.empty()) return;
+  m_redo.push_back(std::move(m_sketch));
+  m_sketch = std::move(m_undo.back());
+  m_undo.pop_back();
+  m_selection.clear();
+  cancelOperation();
+  reportState();
+  redraw();
+  emit historyChanged();
+}
+
+void SketchEditor::redo() {
+  if (m_redo.empty()) return;
+  m_undo.push_back(std::move(m_sketch));
+  m_sketch = std::move(m_redo.back());
+  m_redo.pop_back();
+  m_selection.clear();
+  cancelOperation();
+  reportState();
+  redraw();
+  emit historyChanged();
+}
+
 void SketchEditor::cancelOperation() {
   m_picks.clear();
   if (m_active) redrawPreview();
@@ -247,9 +372,11 @@ void SketchEditor::cancelOperation() {
 
 bool SketchEditor::tryConstraints(const std::vector<Constraint>& cs) {
   const size_t before = m_sketch.constraints.size();
+  remember();
   for (const Constraint& c : cs) m_sketch.addConstraint(c);
   if (m_sketch.solve() == SolveResult::Failed) {
     m_sketch.constraints.resize(before);
+    forget();
     emit message(tr("Conflicting constraint, not added."));
     return false;
   }
@@ -329,15 +456,34 @@ void SketchEditor::toggleFix() {
     return;
   }
   const bool allFixed = std::all_of(pts.begin(), pts.end(), [&](int p) { return m_sketch.points[p].fixed; });
+  remember();
   for (int p : pts) m_sketch.points[p].fixed = !allFixed;
   reportState();
+  redraw();
+}
+
+void SketchEditor::toggleConstruction() {
+  std::vector<int> ents;
+  for (const Item& it : m_selection)
+    if (!it.isPoint) ents.push_back(it.index);
+  if (ents.empty()) {
+    emit message(tr("Construction: select lines, circles or arcs."));
+    return;
+  }
+  const bool all = std::all_of(ents.begin(), ents.end(), [&](int e) { return m_sketch.entities[e].construction; });
+  remember();
+  for (int e : ents) m_sketch.entities[e].construction = !all;
+  m_selection.clear();
+  redraw();
 }
 
 void SketchEditor::deleteSelection() {
   std::vector<int> ents;
   for (const Item& it : m_selection)
     if (!it.isPoint) ents.push_back(it.index);
+  if (ents.empty()) return;
   std::sort(ents.rbegin(), ents.rend()); // highest first keeps the other indices valid
+  remember();
   for (int e : ents) m_sketch.removeEntity(e);
   m_selection.clear();
   m_sketch.solve();
@@ -369,7 +515,10 @@ bool SketchEditor::mousePress(QMouseEvent* e) {
     const auto it = std::find(m_selection.begin(), m_selection.end(), hit);
     if (it == m_selection.end()) m_selection.push_back(hit);
     else m_selection.erase(it);
-    if (hit.isPoint && !m_sketch.points[hit.index].fixed) m_dragPoint = hit.index;
+    if (hit.isPoint && !m_sketch.points[hit.index].fixed) {
+      m_dragPoint = hit.index;
+      m_dragRemembered = false;
+    }
   }
   redraw();
   return true;
@@ -379,6 +528,10 @@ bool SketchEditor::mouseMove(QMouseEvent* e) {
   if (m_dragPoint >= 0) {
     Pick p;
     if (!pickAt(e->position(), false, p)) return true;
+    if (!m_dragRemembered) { // one undo step per drag
+      remember();
+      m_dragRemembered = true;
+    }
     // Hold the dragged point where the mouse is and let the rest follow.
     const std::vector<double> saved = m_sketch.params;
     m_sketch.points[m_dragPoint].fixed = true;
@@ -433,18 +586,83 @@ void SketchEditor::reportState() {
 }
 
 void SketchEditor::redraw() {
-  std::vector<int> normalE, selectedE, normalP, selectedP;
-  for (int i = 0; i < int(m_sketch.entities.size()); ++i)
-    (std::count(m_selection.begin(), m_selection.end(), Item{false, i}) ? selectedE : normalE).push_back(i);
+  std::vector<int> normalE, constructionE, selectedE, normalP, selectedP;
+  for (int i = 0; i < int(m_sketch.entities.size()); ++i) {
+    if (std::count(m_selection.begin(), m_selection.end(), Item{false, i})) selectedE.push_back(i);
+    else (m_sketch.entities[i].construction ? constructionE : normalE).push_back(i);
+  }
   for (int p : usedPoints())
     (std::count(m_selection.begin(), m_selection.end(), Item{true, p}) ? selectedP : normalP).push_back(p);
 
   const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
   m_aisNormal->SetShape(makeShape(m_sketch, m_plane, normalE, normalP));
   ctx->Redisplay(m_aisNormal, false);
+  m_aisConstruction->SetShape(makeShape(m_sketch, m_plane, constructionE, {}));
+  ctx->Redisplay(m_aisConstruction, false);
   m_aisSelected->SetShape(makeShape(m_sketch, m_plane, selectedE, selectedP));
   ctx->Redisplay(m_aisSelected, false);
+  redrawLabels();
   redrawPreview();
+}
+
+// Small text next to each curve: H, V, //, 90°, =, T and the sizes given with
+// Dimension; F next to fixed points.
+void SketchEditor::redrawLabels() {
+  const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
+  for (const auto& label : m_labels) ctx->Remove(label, false);
+  m_labels.clear();
+
+  std::map<int, QStringList> onEntity;
+  for (const Constraint& c : m_sketch.constraints) {
+    switch (c.kind) {
+    case K::Horizontal: onEntity[c.a] << "H"; break;
+    case K::Vertical: onEntity[c.a] << "V"; break;
+    case K::Parallel: onEntity[c.a] << "//"; onEntity[c.b] << "//"; break;
+    case K::Perpendicular: onEntity[c.a] << QString::fromUtf8("90°"); onEntity[c.b] << QString::fromUtf8("90°"); break;
+    case K::Equal: onEntity[c.a] << "="; onEntity[c.b] << "="; break;
+    case K::Tangent: onEntity[c.a] << "T"; break;
+    case K::Length: onEntity[c.a] << num(c.value); break;
+    case K::Radius: onEntity[c.a] << "R" + num(c.value); break;
+    default: break;
+    }
+  }
+
+  const double off = m_viewer->pixelsToWorld(12);
+  auto add = [&](const QString& text, double u, double v) {
+    Handle(AIS_TextLabel) label = new AIS_TextLabel();
+    label->SetText(TCollection_ExtendedString(text.toUtf8().constData(), true));
+    label->SetPosition(toWorld(m_plane, u, v));
+    label->SetColor(Quantity_Color(0.70, 0.18, 0.12, Quantity_TOC_sRGB));
+    label->SetHeight(13);
+    label->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    ctx->Display(label, 0, -1, false);
+    m_labels.push_back(label);
+  };
+
+  for (const auto& [e, texts] : onEntity) {
+    const Entity& en = m_sketch.entities[e];
+    const double x0 = m_sketch.x(en.p[0]), y0 = m_sketch.y(en.p[0]);
+    if (en.kind == EntityKind::Line) { // beside the middle of the line
+      const double x1 = m_sketch.x(en.p[1]), y1 = m_sketch.y(en.p[1]), len = std::hypot(x1 - x0, y1 - y0);
+      if (len < 1e-9) continue;
+      add(texts.join(' '), (x0 + x1) / 2 - (y1 - y0) / len * off, (y0 + y1) / 2 + (x1 - x0) / len * off);
+    } else { // just outside the curve, at 45° or mid-arc
+      double a = std::numbers::pi / 4;
+      if (en.kind == EntityKind::Arc) {
+        const double a1 = std::atan2(m_sketch.y(en.p[1]) - y0, m_sketch.x(en.p[1]) - x0);
+        double a2 = std::atan2(m_sketch.y(en.p[2]) - y0, m_sketch.x(en.p[2]) - x0);
+        while (a2 <= a1) a2 += 2 * std::numbers::pi;
+        a = (a1 + a2) / 2;
+      }
+      const double r = m_sketch.radius(e) + off;
+      add(texts.join(' '), x0 + r * std::cos(a), y0 + r * std::sin(a));
+    }
+  }
+  for (const Constraint& c : m_sketch.constraints) // point-to-point distances
+    if (c.kind == K::Distance)
+      add(num(c.value), (m_sketch.x(c.a) + m_sketch.x(c.b)) / 2, (m_sketch.y(c.a) + m_sketch.y(c.b)) / 2 + off);
+  for (int p : usedPoints())
+    if (m_sketch.points[p].fixed) add("F", m_sketch.x(p) + off * 0.6, m_sketch.y(p) + off * 0.6);
 }
 
 void SketchEditor::redrawPreview() {
@@ -465,6 +683,31 @@ void SketchEditor::redrawPreview() {
     if (m_tool == Tool::Circle && k.size() == 1) add(makeCircle(m_plane, k[0].u, k[0].v, std::hypot(h.u - k[0].u, h.v - k[0].v)));
     if (m_tool == Tool::Arc && k.size() == 1) add(makeSegment(m_plane, k[0].u, k[0].v, h.u, h.v));
     if (m_tool == Tool::Arc && k.size() == 2) add(makeArc(m_plane, k[0].u, k[0].v, k[1].u, k[1].v, h.u, h.v));
+    if (m_tool == Tool::Rectangle && k.size() == 1) {
+      add(makeSegment(m_plane, k[0].u, k[0].v, h.u, k[0].v));
+      add(makeSegment(m_plane, h.u, k[0].v, h.u, h.v));
+      add(makeSegment(m_plane, h.u, h.v, k[0].u, h.v));
+      add(makeSegment(m_plane, k[0].u, h.v, k[0].u, k[0].v));
+    }
+    if (m_tool == Tool::Polygon && k.size() == 1) {
+      const double r = std::hypot(h.u - k[0].u, h.v - k[0].v), a0 = std::atan2(h.v - k[0].v, h.u - k[0].u);
+      for (int i = 0; i < m_polygonSides; ++i) {
+        const double a = a0 + 2 * std::numbers::pi * i / m_polygonSides, b = a + 2 * std::numbers::pi / m_polygonSides;
+        add(makeSegment(m_plane, k[0].u + r * std::cos(a), k[0].v + r * std::sin(a), k[0].u + r * std::cos(b),
+                        k[0].v + r * std::sin(b)));
+      }
+    }
+    if (m_tool == Tool::Slot && k.size() == 1) add(makeSegment(m_plane, k[0].u, k[0].v, h.u, h.v));
+    if (m_tool == Tool::Slot && k.size() == 2) {
+      const double dx = k[1].u - k[0].u, dy = k[1].v - k[0].v, len = std::hypot(dx, dy);
+      if (len > 1e-9) {
+        const double nx = -dy / len, ny = dx / len, r = std::abs((h.u - k[0].u) * nx + (h.v - k[0].v) * ny);
+        add(makeSegment(m_plane, k[0].u + nx * r, k[0].v + ny * r, k[1].u + nx * r, k[1].v + ny * r));
+        add(makeSegment(m_plane, k[0].u - nx * r, k[0].v - ny * r, k[1].u - nx * r, k[1].v - ny * r));
+        add(makeArc(m_plane, k[1].u, k[1].v, k[1].u - nx * r, k[1].v - ny * r, k[1].u + nx * r, k[1].v + ny * r));
+        add(makeArc(m_plane, k[0].u, k[0].v, k[0].u + nx * r, k[0].v + ny * r, k[0].u - nx * r, k[0].v - ny * r));
+      }
+    }
   }
   m_aisPreview->SetShape(preview);
   m_viewer->context()->Redisplay(m_aisPreview, false);

@@ -41,6 +41,7 @@ int main() {
   s.addLine(c, d);
   s.addLine(d, a);
   s.addConstraint({sketch::ConstraintKind::Horizontal, l0});
+  s.entities[s.addCircle(s.addPoint(5, 5), 2)].construction = true;
   s.addConstraint({sketch::ConstraintKind::Length, l0, -1, 10});
   s.points[a].fixed = true;
   doc.add(std::move(sk));
@@ -61,6 +62,14 @@ int main() {
   rev->angle = 90;
   rev->op = Operation::Cut;
   doc.add(std::move(rev));
+
+  auto pat = std::make_unique<PatternFeature>();
+  pat->source = 1;
+  pat->kind = PatternFeature::Kind::Circular;
+  pat->axis = PatternFeature::Axis::Z;
+  pat->count = 3;
+  pat->angle = 90;
+  doc.add(std::move(pat));
   CHECK(!doc.hasErrors());
 
   const QString path = QDir::temp().filePath("roundtrip.ocal");
@@ -73,6 +82,9 @@ int main() {
   CHECK(ls && ls->sketch.constraints.size() == 2 && ls->sketch.points[a].fixed);
   const auto* lr = loaded.as<RevolveFeature>(3);
   CHECK(lr && lr->axis == RevolveFeature::Axis::SketchX && lr->op == Operation::Cut);
+  const auto* lp = loaded.as<PatternFeature>(4);
+  CHECK(lp && lp->kind == PatternFeature::Kind::Circular && lp->axis == PatternFeature::Axis::Z && lp->count == 3);
+  CHECK(ls && ls->sketch.entities.back().construction);
 
   // A damaged file must be rejected, not crash.
   QFile f(path);

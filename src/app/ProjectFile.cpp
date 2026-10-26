@@ -28,6 +28,12 @@ template <> struct Names<Operation> {
 template <> struct Names<RevolveFeature::Axis> {
   static constexpr const char* list[] = {"sketch-x", "sketch-y"};
 };
+template <> struct Names<PatternFeature::Kind> {
+  static constexpr const char* list[] = {"linear", "circular"};
+};
+template <> struct Names<PatternFeature::Axis> {
+  static constexpr const char* list[] = {"x", "y", "z"};
+};
 template <> struct Names<sketch::EntityKind> {
   static constexpr const char* list[] = {"line", "circle", "arc"};
 };
@@ -75,7 +81,8 @@ QJsonObject writeSketch(const SketchFeature& f) {
   for (double v : s.params) params.append(v);
   for (const sketch::Point& pt : s.points) points.append(QJsonObject{{"x", pt.x}, {"y", pt.y}, {"fixed", pt.fixed}});
   for (const sketch::Entity& e : s.entities)
-    entities.append(QJsonObject{{"kind", nameOf(e.kind)}, {"p", QJsonArray{e.p[0], e.p[1], e.p[2]}}, {"r", e.r}});
+    entities.append(QJsonObject{{"kind", nameOf(e.kind)}, {"p", QJsonArray{e.p[0], e.p[1], e.p[2]}}, {"r", e.r},
+                                {"construction", e.construction}});
   for (const sketch::Constraint& c : s.constraints)
     constraints.append(QJsonObject{{"kind", nameOf(c.kind)}, {"a", c.a}, {"b", c.b}, {"value", c.value}});
   return {{"type", "sketch"}, {"plane", plane},          {"params", params},
@@ -98,6 +105,7 @@ std::unique_ptr<SketchFeature> readSketch(const QJsonObject& o) {
     const QJsonArray p = e["p"].toArray();
     for (int i = 0; i < 3; ++i) en.p[i] = p[i].toInt();
     en.r = e["r"].toInt();
+    en.construction = e["construction"].toBool(); // absent in files from 0.1/0.2
     s.entities.push_back(en);
   }
   for (const QJsonValue& v : o["constraints"].toArray()) {
@@ -131,6 +139,11 @@ QJsonObject writeFeature(const Feature& f) {
     return {{"type", "fillet"}, {"edges", intList(fi->edges)}, {"radius", fi->radius}};
   if (auto* c = dynamic_cast<const ChamferFeature*>(&f))
     return {{"type", "chamfer"}, {"edges", intList(c->edges)}, {"distance", c->distance}};
+  if (auto* sh = dynamic_cast<const ShellFeature*>(&f))
+    return {{"type", "shell"}, {"faces", intList(sh->faces)}, {"thickness", sh->thickness}};
+  if (auto* p = dynamic_cast<const PatternFeature*>(&f))
+    return {{"type", "pattern"}, {"source", p->source}, {"kind", nameOf(p->kind)}, {"axis", nameOf(p->axis)},
+            {"count", p->count},   {"spacing", p->spacing}, {"angle", p->angle}};
   if (auto* i = dynamic_cast<const ImportFeature*>(&f))
     return {{"type", "import"}, {"source", QString::fromStdString(i->source)}, {"brep", QString::fromStdString(brepText(i->shape))}};
   fail(QObject::tr("Cannot save feature '%1'.").arg(QString::fromStdString(f.name())));
@@ -165,6 +178,22 @@ std::unique_ptr<Feature> readFeature(const QJsonObject& o) {
     c->edges = intList(o["edges"]);
     c->distance = o["distance"].toDouble();
     return c;
+  }
+  if (type == "shell") {
+    auto sh = std::make_unique<ShellFeature>();
+    sh->faces = intList(o["faces"]);
+    sh->thickness = o["thickness"].toDouble();
+    return sh;
+  }
+  if (type == "pattern") {
+    auto p = std::make_unique<PatternFeature>();
+    p->source = o["source"].toInt();
+    p->kind = valueOf<PatternFeature::Kind>(o["kind"]);
+    p->axis = valueOf<PatternFeature::Axis>(o["axis"]);
+    p->count = o["count"].toInt();
+    p->spacing = o["spacing"].toDouble();
+    p->angle = o["angle"].toDouble();
+    return p;
   }
   if (type == "import") {
     auto i = std::make_unique<ImportFeature>();

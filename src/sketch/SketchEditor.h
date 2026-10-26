@@ -4,6 +4,7 @@
 #include "view/Viewer.h"
 
 #include <AIS_Shape.hxx>
+#include <AIS_TextLabel.hxx>
 #include <gp_Ax3.hxx>
 
 #include <QObject>
@@ -14,7 +15,7 @@
 class SketchEditor : public QObject, public InputHandler {
   Q_OBJECT
 public:
-  enum class Tool { Select, Line, Circle, Arc };
+  enum class Tool { Select, Line, Rectangle, Circle, Arc, Polygon, Slot };
 
   explicit SketchEditor(Viewer* viewer, QObject* parent = nullptr);
 
@@ -27,7 +28,16 @@ public:
   void constrain(sketch::ConstraintKind kind); // applied to the current selection
   void dimension();                           // length, radius or distance
   void toggleFix();
+  void toggleConstruction(); // helper geometry: shown dashed, never becomes a solid
   void deleteSelection();
+  void setPolygonSides(int sides) { m_polygonSides = sides; }
+  int polygonSides() const { return m_polygonSides; }
+
+  // Undo inside the sketch (the model's own undo covers whole sketches).
+  bool canUndo() const { return !m_undo.empty(); }
+  bool canRedo() const { return !m_redo.empty(); }
+  void undo();
+  void redo();
 
   bool mousePress(QMouseEvent*) override;
   bool mouseMove(QMouseEvent*) override;
@@ -37,6 +47,7 @@ public:
 signals:
   void message(const QString& text);
   void toolChanged(SketchEditor::Tool tool);
+  void historyChanged(); // canUndo()/canRedo() may have changed
 
 private:
   struct Pick {
@@ -62,11 +73,17 @@ private:
   std::vector<int> usedPoints() const;
 
   void toolClick(const Pick& p);
+  void addRectangle(const Pick& a, const Pick& b);
+  void addPolygon(const Pick& center, const Pick& corner);
+  void addSlot(const Pick& c1, const Pick& c2, const Pick& side);
+  void remember(); // snapshot for undo, before a change
+  void forget();   // drop that snapshot again (the change was refused)
   bool tryConstraints(const std::vector<sketch::Constraint>& cs);
   void cancelOperation();
   void reportState();
   void redraw();
   void redrawPreview();
+  void redrawLabels();
 
   Viewer* m_viewer;
   gp_Ax3 m_plane;
@@ -79,6 +96,10 @@ private:
   bool m_hoverValid = false;
   std::vector<Item> m_selection;
   int m_dragPoint = -1;
+  bool m_dragRemembered = false;
+  int m_polygonSides = 6;
+  std::vector<sketch::Sketch> m_undo, m_redo;
 
-  Handle(AIS_Shape) m_aisNormal, m_aisSelected, m_aisPreview;
+  Handle(AIS_Shape) m_aisNormal, m_aisConstruction, m_aisSelected, m_aisPreview;
+  std::vector<Handle(AIS_TextLabel)> m_labels; // constraint glyphs and sizes
 };

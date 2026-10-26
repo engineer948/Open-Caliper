@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenCaliper VERSION 0.2.0 LANGUAGES CXX)
+project(OpenCaliper VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,7 +29,7 @@ target_include_directories(cadcore PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(cadcore PUBLIC
   sketchcore
   TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
-  TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKFillet TKMesh
+  TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKFillet TKOffset TKMesh
   TKDE TKXSBase TKDESTEP TKDEIGES TKDESTL
 )
 

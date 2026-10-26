@@ -27,6 +27,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QShortcut>
+#include <QSpinBox>
+#include <QInputDialog>
 #include <QStatusBar>
 #include <QToolBar>
 
@@ -55,6 +57,19 @@ public:
     box->selectAll();
     m_form->addRow(label, box);
     return box;
+  }
+  QSpinBox* integer(const QString& label, int value, int min, int max) {
+    auto* box = new QSpinBox(this);
+    box->setRange(min, max);
+    box->setValue(value);
+    m_form->addRow(label, box);
+    return box;
+  }
+  QLabel* text(const QString& label, const QString& value) {
+    auto* l = new QLabel(value, this);
+    l->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_form->addRow(label, l);
+    return l;
   }
   QComboBox* choice(const QString& label, const QStringList& items, int current = 0) {
     auto* box = new QComboBox(this);
@@ -236,13 +251,28 @@ void MainWindow::buildSketchUi() {
   const std::tuple<QString, QString, QString, SketchEditor::Tool> toolList[] = {
       {tr("Select"), "select", "S", SketchEditor::Tool::Select},
       {tr("Line"), "line", "L", SketchEditor::Tool::Line},
+      {tr("Rectangle"), "rectangle", "R", SketchEditor::Tool::Rectangle},
       {tr("Circle"), "circle", "C", SketchEditor::Tool::Circle},
-      {tr("Arc"), "arc", "A", SketchEditor::Tool::Arc}};
+      {tr("Arc"), "arc", "A", SketchEditor::Tool::Arc},
+      {tr("Polygon"), "polygon", "G", SketchEditor::Tool::Polygon},
+      {tr("Slot"), "slot", "K", SketchEditor::Tool::Slot}};
   for (const auto& [text, icon, key, t] : toolList) {
     QAction* a = action(text, icon, QKeySequence(key));
     a->setCheckable(true);
     const SketchEditor::Tool tool = t;
-    connect(a, &QAction::triggered, this, [this, tool] { m_editor->setTool(tool); });
+    connect(a, &QAction::triggered, this, [this, tool] {
+      if (tool == SketchEditor::Tool::Polygon) {
+        bool ok = false;
+        const int sides = QInputDialog::getInt(this, tr("Polygon"), tr("Number of sides:"), m_editor->polygonSides(), 3, 64, 1, &ok);
+        if (!ok) {
+          m_toolActions[SketchEditor::Tool::Select]->setChecked(true); // keep the previous tool shown
+          m_editor->setTool(SketchEditor::Tool::Select);
+          return;
+        }
+        m_editor->setPolygonSides(sides);
+      }
+      m_editor->setTool(tool);
+    });
     tools->addAction(a);
     menu->addAction(a);
     m_drawBar->addAction(a);
@@ -250,6 +280,14 @@ void MainWindow::buildSketchUi() {
     m_sketchActions << a;
   }
   connect(m_editor, &SketchEditor::toolChanged, this, [this](SketchEditor::Tool t) { m_toolActions[t]->setChecked(true); });
+  connect(m_editor, &SketchEditor::historyChanged, this, &MainWindow::updateActions);
+  QAction* construction = action(tr("Construction"), "construction", QKeySequence("X"),
+                                 tr("Turn the selected curves into dashed helper geometry that never becomes a solid"));
+  connect(construction, &QAction::triggered, this, [this] { m_editor->toggleConstruction(); });
+  menu->addAction(construction);
+  m_drawBar->addSeparator();
+  m_drawBar->addAction(construction);
+  m_sketchActions << construction;
   menu->addSeparator();
 
   m_constraintBar = addToolBar(tr("Constraints"));
@@ -300,6 +338,16 @@ void MainWindow::buildModelUi() {
       [this] { filletOrChamfer(true); });
   add(action(tr("Chamfer"), "chamfer", QKeySequence("Shift+C"), tr("Bevel the selected edges")),
       [this] { filletOrChamfer(false); });
+  add(action(tr("Shell"), "shell", QKeySequence("Shift+H"), tr("Hollow the part out, leaving the selected faces open")),
+      [this] { shell(); });
+  add(action(tr("Pattern"), "pattern", QKeySequence("Shift+P"), tr("Repeat an extrude or revolve in a row or a circle")),
+      [this] { pattern(); });
+  bar->addSeparator();
+  menu->addSeparator();
+  add(action(tr("Measure"), "measure", QKeySequence("M"), tr("Click one or two points, edges or faces first")),
+      [this] { measure(); });
+  add(action(tr("Properties"), "properties", QKeySequence("Shift+M"), tr("Volume, size and weight of the part")),
+      [this] { showProperties(); });
 }
 
 void MainWindow::buildTimeline() {
@@ -432,6 +480,23 @@ TopoDS_Face MainWindow::selectedFace() const {
   return {};
 }
 
+std::vector<int> MainWindow::selectedFaces() const {
+  std::vector<int> faces;
+  for (const TopoDS_Shape& s : selectedShapes())
+    if (s.ShapeType() == TopAbs_FACE)
+      if (int i = faceIndex(m_doc.body(), s); i > 0) faces.push_back(i);
+  return faces;
+}
+
+std::vector<TopoDS_Shape> MainWindow::selectedShapes() const {
+  std::vector<TopoDS_Shape> shapes;
+  const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
+  if (m_bodyAis.IsNull()) return shapes;
+  for (ctx->InitSelected(); ctx->MoreSelected(); ctx->NextSelected())
+    if (ctx->SelectedInteractive() == m_bodyAis && ctx->HasSelectedShape()) shapes.push_back(ctx->SelectedShape());
+  return shapes;
+}
+
 // --- features -----------------------------------------------------------------
 
 void MainWindow::extrude(int editIndex) {
@@ -513,6 +578,111 @@ void MainWindow::filletOrChamfer(bool fillet, int editIndex) {
   else addFeature(std::move(f));
 }
 
+void MainWindow::shell(int editIndex) {
+  const auto* old = editIndex >= 0 ? m_doc.as<ShellFeature>(editIndex) : nullptr;
+  const std::vector<int> faces = old ? old->faces : selectedFaces();
+  if (faces.empty()) {
+    hint(tr("Shell: click the face(s) to leave open first, e.g. the top (Shift+click adds)."));
+    return;
+  }
+  FormDialog dlg(this, tr("Shell"));
+  QDoubleSpinBox* thickness = dlg.number(tr("Wall thickness:"), old ? old->thickness : 2, 0.01, 1e5, " mm");
+  if (!dlg.run()) return;
+  auto f = std::make_unique<ShellFeature>();
+  f->faces = faces;
+  f->thickness = thickness->value();
+  if (old) replaceFeature(editIndex, std::move(f));
+  else addFeature(std::move(f));
+}
+
+void MainWindow::pattern(int editIndex) {
+  const auto* old = editIndex >= 0 ? m_doc.as<PatternFeature>(editIndex) : nullptr;
+  // Extrudes and revolves before this step can be repeated.
+  const size_t end = old ? size_t(editIndex) : m_doc.size();
+  std::vector<int> sources;
+  QStringList names;
+  for (size_t i = 0; i < end; ++i)
+    if (m_doc.as<ExtrudeFeature>(i) || m_doc.as<RevolveFeature>(i)) {
+      sources.push_back(int(i));
+      names << QString("%1. %2").arg(i + 1).arg(describe(i));
+    }
+  if (sources.empty()) {
+    hint(tr("Pattern: make an extrude or revolve first (for example a hole cut), then repeat it."));
+    return;
+  }
+  const int current = old ? int(std::find(sources.begin(), sources.end(), old->source) - sources.begin())
+                          : int(sources.size()) - 1;
+
+  FormDialog dlg(this, tr("Pattern"));
+  QComboBox* source = dlg.choice(tr("Repeat:"), names, std::clamp(current, 0, int(sources.size()) - 1));
+  QComboBox* kind = dlg.choice(tr("Type:"), {tr("In a row (linear)"), tr("In a circle (circular)")},
+                               old && old->kind == PatternFeature::Kind::Circular ? 1 : 0);
+  QComboBox* axis = dlg.choice(tr("Axis:"), {tr("X"), tr("Y"), tr("Z")}, old ? int(old->axis) : 0);
+  QSpinBox* count = dlg.integer(tr("Copies (in total):"), old ? old->count : 3, 2, 500);
+  QDoubleSpinBox* spacing = dlg.number(tr("Spacing:"), old ? old->spacing : 20, -1e5, 1e5, " mm");
+  QDoubleSpinBox* angle = dlg.number(tr("Total angle:"), old ? old->angle : 360, 1, 360, QString::fromUtf8(" °"));
+  auto sync = [&] { // a row needs spacing, a circle an angle
+    spacing->setEnabled(kind->currentIndex() == 0);
+    angle->setEnabled(kind->currentIndex() == 1);
+    if (kind->currentIndex() == 1 && !old) axis->setCurrentIndex(2); // around Z is the usual case
+  };
+  connect(kind, &QComboBox::currentIndexChanged, &dlg, sync);
+  sync();
+  if (!dlg.run()) return;
+
+  auto f = std::make_unique<PatternFeature>();
+  f->source = sources[source->currentIndex()];
+  f->kind = kind->currentIndex() == 0 ? PatternFeature::Kind::Linear : PatternFeature::Kind::Circular;
+  f->axis = PatternFeature::Axis(axis->currentIndex());
+  f->count = count->value();
+  f->spacing = spacing->value();
+  f->angle = angle->value();
+  if (old) replaceFeature(editIndex, std::move(f));
+  else addFeature(std::move(f));
+}
+
+void MainWindow::measure() {
+  const std::vector<TopoDS_Shape> picked = selectedShapes();
+  const std::string result = picked.size() <= 2 ? model::measure(picked) : std::string();
+  if (result.empty()) {
+    hint(tr("Measure: click one or two points, edges or faces of the part (Shift+click for the second)."));
+    return;
+  }
+  QMessageBox::information(this, tr("Measure"), QString::fromStdString(result));
+}
+
+void MainWindow::showProperties() {
+  if (m_doc.body().IsNull()) {
+    hint(tr("Properties: there is no body yet."));
+    return;
+  }
+  const MassProperties m = massProperties(m_doc.body());
+  // Density in g/cm³ of common materials for 3D printing and machining.
+  const std::pair<QString, double> materials[] = {
+      {tr("PLA"), 1.24},        {tr("PETG"), 1.27},      {tr("ABS"), 1.04},   {tr("Nylon (PA12)"), 1.01},
+      {tr("Aluminium"), 2.70}, {tr("Steel"), 7.85},     {tr("Stainless steel"), 8.00},
+      {tr("Brass"), 8.50},     {tr("Wood (pine)"), 0.50}};
+  QStringList names;
+  for (const auto& [name, density] : materials) names << QString("%1  (%2 g/cm³)").arg(name).arg(density);
+
+  FormDialog dlg(this, tr("Properties"));
+  dlg.text(tr("Volume:"), tr("%1 cm³  (%2 mm³)").arg(num(m.volume / 1000)).arg(num(m.volume)));
+  dlg.text(tr("Surface area:"), tr("%1 cm²").arg(num(m.area / 100)));
+  dlg.text(tr("Size (X × Y × Z):"),
+           QString::fromUtf8("%1 × %2 × %3 mm").arg(num(m.size.X()), num(m.size.Y()), num(m.size.Z())));
+  dlg.text(tr("Centre of mass:"),
+           QString("X %1, Y %2, Z %3 mm").arg(num(m.center.X()), num(m.center.Y()), num(m.center.Z())));
+  QComboBox* material = dlg.choice(tr("Material:"), names);
+  QLabel* weight = dlg.text(tr("Weight:"), {});
+  auto update = [&] {
+    const double grams = m.volume / 1000 * materials[material->currentIndex()].second;
+    weight->setText(tr("<b>%1 g</b>").arg(num(std::round(grams * 10) / 10)));
+  };
+  connect(material, &QComboBox::currentIndexChanged, &dlg, update);
+  update();
+  dlg.run();
+}
+
 void MainWindow::editFeature(int index) {
   if (index < 0 || index >= int(m_doc.size()) || m_editor->isActive()) return;
   if (const auto* s = m_doc.as<SketchFeature>(index)) {
@@ -529,6 +699,10 @@ void MainWindow::editFeature(int index) {
     filletOrChamfer(true, index);
   } else if (m_doc.as<ChamferFeature>(index)) {
     filletOrChamfer(false, index);
+  } else if (m_doc.as<ShellFeature>(index)) {
+    shell(index);
+  } else if (m_doc.as<PatternFeature>(index)) {
+    pattern(index);
   } else {
     hint(tr("This step has no settings to change."));
   }
@@ -605,7 +779,8 @@ void MainWindow::documentChanged() {
 }
 
 void MainWindow::undo() {
-  if (m_undo.empty() || m_editor->isActive()) return;
+  if (m_editor->isActive()) return m_editor->undo(); // inside a sketch: undo sketch edits
+  if (m_undo.empty()) return;
   m_redo.push_back(std::move(m_doc));
   m_doc = std::move(m_undo.back());
   m_undo.pop_back();
@@ -613,7 +788,8 @@ void MainWindow::undo() {
 }
 
 void MainWindow::redo() {
-  if (m_redo.empty() || m_editor->isActive()) return;
+  if (m_editor->isActive()) return m_editor->redo();
+  if (m_redo.empty()) return;
   m_undo.push_back(std::move(m_doc));
   m_doc = std::move(m_redo.back());
   m_redo.pop_back();
@@ -765,6 +941,7 @@ void MainWindow::refreshScene() {
     // afterwards is never picked.
     ctx->Display(m_bodyAis, AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_FACE), false);
     ctx->Activate(m_bodyAis, AIS_Shape::SelectionMode(TopAbs_EDGE));
+    ctx->Activate(m_bodyAis, AIS_Shape::SelectionMode(TopAbs_VERTEX)); // for Measure
   }
   // Sketches stay visible (and selectable) until a feature uses them, like Fusion.
   for (size_t i = 0; i < m_doc.size(); ++i) {
@@ -829,6 +1006,14 @@ QString MainWindow::describe(size_t i) const {
     return tr("Fillet R%1, %n edge(s)", "", int(f->edges.size())).arg(num(f->radius));
   if (const auto* c = m_doc.as<ChamferFeature>(i))
     return tr("Chamfer %1 mm, %n edge(s)", "", int(c->edges.size())).arg(num(c->distance));
+  if (const auto* sh = m_doc.as<ShellFeature>(i))
+    return tr("Shell %1 mm, %n open face(s)", "", int(sh->faces.size())).arg(num(sh->thickness));
+  if (const auto* p = m_doc.as<PatternFeature>(i)) {
+    const QString axis = QString("XYZ")[int(p->axis)];
+    return p->kind == PatternFeature::Kind::Linear
+               ? tr("Pattern %1× along %2, %3 mm apart").arg(p->count).arg(axis, num(p->spacing))
+               : tr("Pattern %1× around %2, %3°").arg(p->count).arg(axis, num(p->angle));
+  }
   if (const auto* im = m_doc.as<ImportFeature>(i))
     return tr("Import %1").arg(QString::fromStdString(im->source));
   return QString::fromStdString(m_doc.feature(i).name());
@@ -855,10 +1040,11 @@ void MainWindow::updateActions() {
   m_drawBar->setVisible(sketching);
   m_constraintBar->setVisible(sketching);
   m_timeline->setEnabled(!sketching);
-  m_undoAction->setEnabled(!sketching && !m_undo.empty());
-  m_redoAction->setEnabled(!sketching && !m_redo.empty());
+  m_undoAction->setEnabled(sketching ? m_editor->canUndo() : !m_undo.empty());
+  m_redoAction->setEnabled(sketching ? m_editor->canRedo() : !m_redo.empty());
   if (sketching)
-    hint(tr("Sketching: L line, C circle, A arc, S select. Esc stops, Delete removes. Ctrl+Enter finishes."));
+    hint(tr("Sketching: L line, R rectangle, C circle, A arc, G polygon, K slot, X construction, S select. "
+            "Esc stops, Delete removes, Ctrl+Z undoes. Ctrl+Enter finishes."));
   else if (m_doc.size() == 0)
     hint(tr("Start with a sketch: pick a plane in the Sketch toolbar."));
 }

@@ -25,7 +25,23 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepGProp.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <gp_Trsf.hxx>
+
 #include <algorithm>
+#include <cstdio>
+#include <optional>
 #include <set>
 
 #include <numbers>
@@ -83,12 +99,111 @@ int edgeIndex(const TopoDS_Shape& body, const TopoDS_Shape& edge) {
   return map.FindIndex(edge);
 }
 
+int faceIndex(const TopoDS_Shape& body, const TopoDS_Shape& face) {
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(body, TopAbs_FACE, map);
+  return map.FindIndex(face);
+}
+
+MassProperties massProperties(const TopoDS_Shape& shape) {
+  MassProperties m;
+  if (shape.IsNull()) return m;
+  GProp_GProps vol, surf;
+  BRepGProp::VolumeProperties(shape, vol);
+  BRepGProp::SurfaceProperties(shape, surf);
+  m.volume = vol.Mass();
+  m.area = surf.Mass();
+  m.center = vol.CentreOfMass();
+  Bnd_Box box;
+  BRepBndLib::AddOptimal(shape, box, false);
+  if (!box.IsVoid()) {
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    m.size = gp_XYZ(x1 - x0, y1 - y0, z1 - z0);
+  }
+  return m;
+}
+
+namespace {
+
+std::string mm(double v) {
+  char buf[64];
+  std::snprintf(buf, sizeof buf, "%.3f", v);
+  std::string s = buf; // drop trailing zeros: 12.500 -> 12.5
+  while (s.back() == '0') s.pop_back();
+  if (s.back() == '.') s.pop_back();
+  return s;
+}
+
+std::string describeOne(const TopoDS_Shape& s) {
+  switch (s.ShapeType()) {
+  case TopAbs_VERTEX: {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(s));
+    return "Point: X " + mm(p.X()) + ", Y " + mm(p.Y()) + ", Z " + mm(p.Z()) + " mm";
+  }
+  case TopAbs_EDGE: {
+    GProp_GProps g;
+    BRepGProp::LinearProperties(s, g);
+    std::string text = "Edge length: " + mm(g.Mass()) + " mm";
+    BRepAdaptor_Curve c(TopoDS::Edge(s));
+    if (c.GetType() == GeomAbs_Circle)
+      text += "\nCircle: diameter " + mm(2 * c.Circle().Radius()) + " mm (radius " + mm(c.Circle().Radius()) + " mm)";
+    return text;
+  }
+  case TopAbs_FACE: {
+    GProp_GProps g;
+    BRepGProp::SurfaceProperties(s, g);
+    std::string text = "Face area: " + mm(g.Mass()) + " mm²";
+    BRepAdaptor_Surface f(TopoDS::Face(s));
+    if (f.GetType() == GeomAbs_Cylinder) text += "\nCylinder: diameter " + mm(2 * f.Cylinder().Radius()) + " mm";
+    return text;
+  }
+  default:
+    return {};
+  }
+}
+
+// Direction of a straight edge or normal of a flat face, if it has one.
+std::optional<gp_Dir> direction(const TopoDS_Shape& s) {
+  if (s.ShapeType() == TopAbs_EDGE) {
+    BRepAdaptor_Curve c(TopoDS::Edge(s));
+    if (c.GetType() == GeomAbs_Line) return c.Line().Direction();
+  } else if (s.ShapeType() == TopAbs_FACE) {
+    BRepAdaptor_Surface f(TopoDS::Face(s));
+    if (f.GetType() == GeomAbs_Plane) return f.Plane().Axis().Direction();
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+std::string measure(const std::vector<TopoDS_Shape>& picked) {
+  if (picked.size() == 1) return describeOne(picked[0]);
+  if (picked.size() != 2) return {};
+  BRepExtrema_DistShapeShape dist(picked[0], picked[1]);
+  if (!dist.IsDone()) return {};
+  std::string text = "Distance: " + mm(dist.Value()) + " mm";
+  const auto d0 = direction(picked[0]), d1 = direction(picked[1]);
+  if (d0 && d1) {
+    // Plane normals are not oriented, so report the acute angle (0-90°).
+    double a = d0->Angle(*d1) * 180.0 / std::numbers::pi;
+    a = std::min(a, 180 - a);
+    if (picked[0].ShapeType() != picked[1].ShapeType()) a = 90 - a; // edge vs. face normal -> edge vs. face
+    text += "\nAngle: " + mm(a) + "°";
+  }
+  const gp_Pnt a = dist.PointOnShape1(1), b = dist.PointOnShape2(1);
+  text += "\nΔX " + mm(std::abs(b.X() - a.X())) + ", ΔY " + mm(std::abs(b.Y() - a.Y())) + ", ΔZ " +
+          mm(std::abs(b.Z() - a.Z())) + " mm";
+  return text;
+}
+
 // --- features -----------------------------------------------------------------
 
 TopoDS_Shape SketchFeature::edges() const {
-  std::vector<int> all(sketch.entities.size());
-  std::iota(all.begin(), all.end(), 0);
-  return sketch::makeShape(sketch, plane, all, {});
+  std::vector<int> real; // construction geometry is left out of profiles
+  for (int i = 0; i < int(sketch.entities.size()); ++i)
+    if (!sketch.entities[i].construction) real.push_back(i);
+  return sketch::makeShape(sketch, plane, real, {});
 }
 
 TopoDS_Shape SketchFeature::profile() const {
@@ -125,21 +240,70 @@ TopoDS_Shape SketchFeature::profile() const {
   return result;
 }
 
-TopoDS_Shape ExtrudeFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+TopoDS_Shape ExtrudeFeature::tool(const Document& doc) const {
   const SketchFeature& s = inputSketch(doc, sketch);
   if (std::abs(distance) < 1e-9) fail("The extrude distance is zero.");
   BRepPrimAPI_MakePrism prism(s.profile(), gp_Vec(s.plane.Direction()) * distance);
   if (!prism.IsDone()) fail("Extrude failed.");
-  return combine(body, prism.Shape(), op);
+  return prism.Shape();
 }
 
-TopoDS_Shape RevolveFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+TopoDS_Shape ExtrudeFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+  return combine(body, tool(doc), op);
+}
+
+TopoDS_Shape RevolveFeature::tool(const Document& doc) const {
   const SketchFeature& s = inputSketch(doc, sketch);
   if (angle <= 0 || angle > 360) fail("The revolve angle must be between 0 and 360 degrees.");
   const gp_Ax1 ax(s.plane.Location(), axis == Axis::SketchX ? s.plane.XDirection() : s.plane.YDirection());
   BRepPrimAPI_MakeRevol revol(s.profile(), ax, angle * std::numbers::pi / 180.0);
   if (!revol.IsDone()) fail("Revolve failed.");
-  return combine(body, revol.Shape(), op);
+  return revol.Shape();
+}
+
+TopoDS_Shape RevolveFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+  return combine(body, tool(doc), op);
+}
+
+TopoDS_Shape ShellFeature::build(const Document&, const TopoDS_Shape& body) const {
+  if (thickness <= 0) fail("The wall thickness must be positive.");
+  if (body.IsNull()) fail("There is no body yet.");
+  if (faces.empty()) fail("Select at least one face to open.");
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(body, TopAbs_FACE, map);
+  TopTools_ListOfShape open;
+  for (int i : faces) {
+    if (i < 1 || i > map.Extent()) fail("A selected face no longer exists (an earlier step changed the shape).");
+    open.Append(map(i));
+  }
+  BRepOffsetAPI_MakeThickSolid shell;
+  shell.MakeThickSolidByJoin(body, open, -thickness, 1e-3); // negative: walls grow inwards
+  shell.Build();
+  if (!shell.IsDone()) fail("Shell failed (wall too thick for this shape?).");
+  return shell.Shape();
+}
+
+TopoDS_Shape PatternFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+  if (count < 2) fail("A pattern needs at least 2 copies.");
+  if (count > 500) fail("At most 500 copies.");
+  TopoDS_Shape original;
+  Operation op = Operation::Join;
+  if (const auto* e = doc.as<ExtrudeFeature>(size_t(source))) original = e->tool(doc), op = e->op;
+  else if (const auto* r = doc.as<RevolveFeature>(size_t(source))) original = r->tool(doc), op = r->op;
+  else fail("A pattern repeats an extrude or a revolve.");
+
+  const gp_Dir dir = axis == Axis::X ? gp::DX() : axis == Axis::Y ? gp::DY() : gp::DZ();
+  // A full circle has no copy on top of the original: 360/count; an arc ends on its last copy.
+  const bool full = std::abs(angle - 360) < 1e-9;
+  const double stepAngle = angle * std::numbers::pi / 180.0 / (full ? count : count - 1);
+  TopoDS_Shape result = body;
+  for (int i = 1; i < count; ++i) { // copy 0 is the original feature itself
+    gp_Trsf t;
+    if (kind == Kind::Linear) t.SetTranslation(gp_Vec(dir) * (spacing * i));
+    else t.SetRotation(gp_Ax1(gp::Origin(), dir), stepAngle * i);
+    result = combine(result, BRepBuilderAPI_Transform(original, t, true).Shape(), op);
+  }
+  return result;
 }
 
 TopoDS_Shape FilletFeature::build(const Document&, const TopoDS_Shape& body) const {

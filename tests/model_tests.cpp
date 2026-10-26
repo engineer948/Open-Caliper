@@ -187,6 +187,87 @@ static void exportImportRoundTrip() {
   }
 }
 
+// 1-based index of the face whose centre is at `c`.
+static int faceAt(const TopoDS_Shape& body, gp_Pnt c) {
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(body, TopAbs_FACE, map);
+  for (int i = 1; i <= map.Extent(); ++i) {
+    GProp_GProps p;
+    BRepGProp::SurfaceProperties(map(i), p);
+    if (p.CentreOfMass().Distance(c) < 1e-6) return i;
+  }
+  return 0;
+}
+
+static void shellOpenBox() {
+  Document doc;
+  doc.add(extrude(doc.add(rectangle(0, 0, 10, 10)), 10));
+  auto shell = std::make_unique<ShellFeature>();
+  shell->faces = {faceAt(doc.body(), gp_Pnt(5, 5, 10))}; // open the top
+  shell->thickness = 1;
+  CHECK(shell->faces[0] > 0);
+  const int s = doc.add(std::move(shell));
+  CHECK(doc.error(s).empty());
+  CHECK(near(volume(doc.body()), 1000 - 8 * 8 * 9));
+}
+
+static void patterns() {
+  // 30 x 10 x 2 plate, one 2 x 2 hole cut through, then patterned.
+  Document doc;
+  doc.add(extrude(doc.add(rectangle(0, 0, 30, 10)), 2));
+  const int hole = doc.add(extrude(doc.add(rectangle(2, 4, 4, 6)), 2, Operation::Cut));
+  auto lin = std::make_unique<PatternFeature>();
+  lin->source = hole;
+  lin->count = 3;
+  lin->spacing = 10;
+  const int p = doc.add(std::move(lin));
+  CHECK(doc.error(p).empty());
+  CHECK(near(volume(doc.body()), 600 - 3 * 8));
+
+  // Four bosses around Z.
+  Document ring;
+  const int boss = ring.add(extrude(ring.add(rectangle(10, -1, 12, 1)), 5));
+  auto circ = std::make_unique<PatternFeature>();
+  circ->source = boss;
+  circ->kind = PatternFeature::Kind::Circular;
+  circ->axis = PatternFeature::Axis::Z;
+  circ->count = 4;
+  const int c = ring.add(std::move(circ));
+  CHECK(ring.error(c).empty());
+  CHECK(near(volume(ring.body()), 4 * 20));
+
+  // Deleting the patterned feature deletes the pattern too.
+  CHECK(doc.removeWithDependents(hole) == 2);
+}
+
+static void constructionIsNotSolid() {
+  Document doc;
+  auto sk = rectangle(0, 0, 10, 10);
+  const int c = sk->sketch.addCircle(sk->sketch.addPoint(5, 5), 3);
+  sk->sketch.entities[c].construction = true; // a helper circle, not a hole
+  doc.add(extrude(doc.add(std::move(sk)), 1));
+  CHECK(near(volume(doc.body()), 100));
+}
+
+static void propertiesAndMeasure() {
+  Document doc;
+  doc.add(extrude(doc.add(rectangle(0, 0, 10, 20)), 5));
+  const MassProperties m = massProperties(doc.body());
+  CHECK(near(m.volume, 1000));
+  CHECK(near(m.area, 2 * (200 + 50 + 100)));
+  CHECK(near(m.center.X(), 5) && near(m.center.Y(), 10) && near(m.center.Z(), 2.5));
+  CHECK(std::abs(m.size.X() - 10) < 1e-3 && std::abs(m.size.Z() - 5) < 1e-3);
+
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(doc.body(), TopAbs_FACE, faces);
+  const std::string text =
+      measure({faces(faceAt(doc.body(), gp_Pnt(5, 10, 0))), faces(faceAt(doc.body(), gp_Pnt(5, 10, 5)))});
+  CHECK(text.find("Distance: 5 mm") != std::string::npos);
+  CHECK(text.find("Angle: 0") != std::string::npos);
+  const std::string one = measure({faces(faceAt(doc.body(), gp_Pnt(5, 10, 5)))});
+  CHECK(one.find("Face area: 200") != std::string::npos);
+}
+
 int main() {
   extrudeBox();
   holeFromInnerLoop();
@@ -198,6 +279,10 @@ int main() {
   removeWithDependentsShiftsReferences();
   copyIsIndependent();
   exportImportRoundTrip();
+  shellOpenBox();
+  patterns();
+  constructionIsNotSolid();
+  propertiesAndMeasure();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return EXIT_FAILURE;

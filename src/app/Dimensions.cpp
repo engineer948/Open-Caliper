@@ -76,7 +76,7 @@ DimensionList buildDimensions(const Document& doc) {
       // Every circle and arc: holes are what people want to resize most.
       for (int e = 0; e < int(s.entities.size()); ++e) {
         const sketch::Entity& en = s.entities[e];
-        if (en.kind == EntityKind::Line) continue;
+        if (en.kind == EntityKind::Line || en.construction) continue;
         const double r = s.radius(e);
         if (r < kMin) continue;
         const gp_Circ circ(gp_Ax2(world(en.p[0]), at.Direction(), at.XDirection()), r);

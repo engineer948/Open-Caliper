@@ -50,10 +50,16 @@ private:
   void extrude(int editIndex = -1);
   void revolve(int editIndex = -1);
   void filletOrChamfer(bool fillet, int editIndex = -1);
+  void shell(int editIndex = -1);
+  void pattern(int editIndex = -1);
+  void measure();
+  void showProperties();
   void editFeature(int index);
   void deleteFeature(int index);
   std::vector<int> selectedEdges() const;
   TopoDS_Face selectedFace() const;
+  std::vector<int> selectedFaces() const;
+  std::vector<TopoDS_Shape> selectedShapes() const; // picked vertices, edges, faces of the body
 
   // document changes: every change goes through these, for undo
   bool addFeature(std::unique_ptr<model::Feature> feature);

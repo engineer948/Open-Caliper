@@ -249,9 +249,24 @@ void Sketch::residuals(const std::vector<double>& p, std::vector<double>& out) c
       else out.push_back(len(c.a) - len(c.b));
       break;
     case ConstraintKind::Tangent: {
-      const int p0 = entities[c.a].p[0], cc = center(c.b);
-      const double d = std::abs(dx(c.a) * (Y(cc) - Y(p0)) - dy(c.a) * (X(cc) - X(p0))) / (len(c.a) + kEps);
-      out.push_back(d - rad(c.b));
+      const Entity& line = entities[c.a];
+      const Entity& curve = entities[c.b];
+      const int cc = center(c.b);
+      // Line and arc joined at an end (slots, rounded corners): "distance =
+      // radius" has zero slope there, so the solver could not see it. Ask for
+      // the line to be perpendicular to the radius at the shared point instead.
+      int joint = -1;
+      if (curve.kind == EntityKind::Arc)
+        for (int lp : {line.p[0], line.p[1]})
+          if (lp == curve.p[1] || lp == curve.p[2]) joint = lp;
+      if (joint >= 0) {
+        const double rx = X(joint) - X(cc), ry = Y(joint) - Y(cc);
+        out.push_back((dx(c.a) * rx + dy(c.a) * ry) / (len(c.a) * std::hypot(rx, ry) + kEps));
+      } else {
+        const int p0 = line.p[0];
+        const double d = std::abs(dx(c.a) * (Y(cc) - Y(p0)) - dy(c.a) * (X(cc) - X(p0))) / (len(c.a) + kEps);
+        out.push_back(d - rad(c.b));
+      }
       break;
     }
     case ConstraintKind::PointOnLine: {

@@ -36,6 +36,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-10-26">
+      <description>
+        <p>Rectangle, polygon and slot tools, construction geometry, visible constraints and undo while sketching; shell and pattern; measuring and part properties with weight.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-26">
       <description>
         <p>OpenCaliper is now part of Open Workshop Tools and has a new application ID.</p>

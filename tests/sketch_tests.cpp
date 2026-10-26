@@ -122,6 +122,28 @@ static void deletedEntityFreesItsDof() {
   CHECK(s.dof() == 4);
 }
 
+// A slot: two arcs joined to two lines at their ends. Only the two centres
+// and the radius may stay free, and dragging must keep the ends tangent.
+static void slotIsTangentAtJoints() {
+  Sketch s;
+  const double r = 3;
+  const int c1 = s.addPoint(0, 0), c2 = s.addPoint(10, 0);
+  const int a1 = s.addPoint(0, r), b1 = s.addPoint(0, -r), a2 = s.addPoint(10, r), b2 = s.addPoint(10, -r);
+  const int top = s.addLine(a1, a2), bottom = s.addLine(b1, b2);
+  const int end2 = s.addArc(c2, b2, a2), end1 = s.addArc(c1, a1, b1);
+  for (int line : {top, bottom})
+    for (int arc : {end1, end2}) s.addConstraint({K::Tangent, line, arc});
+  s.addConstraint({K::Equal, end1, end2});
+  CHECK(s.dof() == 5);
+
+  s.points[c2].fixed = true;
+  s.setPoint(c2, 10, 6); // tilt the slot
+  CHECK(s.solve() == SolveResult::Ok);
+  const double dx = s.x(a2) - s.x(a1), dy = s.y(a2) - s.y(a1);
+  const double rx = s.x(a1) - s.x(c1), ry = s.y(a1) - s.y(c1);
+  CHECK(std::abs(dx * rx + dy * ry) / (std::hypot(dx, dy) * std::hypot(rx, ry)) < 1e-6);
+}
+
 int main() {
   freeEntitiesDof();
   rectangle();
@@ -131,6 +153,7 @@ int main() {
   parallelAndPerpendicular();
   removeEntityReindexesConstraints();
   deletedEntityFreesItsDof();
+  slotIsTangentAtJoints();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return EXIT_FAILURE;

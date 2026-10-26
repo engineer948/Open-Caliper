@@ -6,6 +6,8 @@
 #include <QPalette>
 #include <QPixmap>
 
+#include <cmath>
+
 namespace {
 
 constexpr int kSize = 64; // drawn at 64 px, Qt scales down
@@ -152,6 +154,55 @@ void drawIcon(QPainter& p, const QString& n, const QColor& ink, const QColor& ac
     p.drawRect(22, 22, 20, 20);
   } else if (n == "iso") {
     box3d(8);
+  } else if (n == "rectangle") {
+    p.drawRect(QRectF(10, 16, 44, 32));
+    dot(10, 16);
+    dot(54, 48);
+  } else if (n == "polygon") {
+    QPolygonF hex;
+    for (int i = 0; i < 6; ++i) hex << QPointF(32 + 22 * std::cos(i * 3.14159265 / 3), 32 + 22 * std::sin(i * 3.14159265 / 3));
+    p.drawPolygon(hex);
+    dot(32, 32);
+  } else if (n == "slot") {
+    QPainterPath path;
+    path.moveTo(20, 20);
+    path.lineTo(44, 20);
+    path.arcTo(QRectF(32, 20, 24, 24), 90, -180);
+    path.lineTo(20, 44);
+    path.arcTo(QRectF(8, 20, 24, 24), 270, -180);
+    p.drawPath(path);
+    dot(20, 32);
+    dot(44, 32);
+  } else if (n == "construction") {
+    p.setPen(QPen(ink, 4, Qt::DashLine, Qt::RoundCap));
+    p.drawLine(10, 50, 54, 14);
+    p.drawEllipse(QPointF(32, 32), 14, 14);
+  } else if (n == "shell") {
+    box3d(16);
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    QPainterPath inner;
+    inner.moveTo(20, 27);
+    inner.lineTo(32, 21);
+    inner.lineTo(44, 27);
+    inner.lineTo(32, 33);
+    inner.closeSubpath();
+    p.drawPath(inner);
+  } else if (n == "pattern") {
+    for (int i = 0; i < 3; ++i) p.drawRect(QRectF(8 + i * 17, 22, 12, 20));
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(10, 52, 54, 52);
+  } else if (n == "measure") {
+    p.drawLine(10, 50, 54, 14);
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap));
+    for (int i = 1; i < 5; ++i) {
+      const double x = 10 + i * 8.8, y = 50 - i * 7.2;
+      p.drawLine(QPointF(x, y), QPointF(x + 5, y + 6));
+    }
+  } else if (n == "properties") {
+    p.drawRect(QRectF(14, 22, 36, 30));
+    p.drawArc(QRectF(24, 10, 16, 16), 0, 180 * 16);
+    p.setPen(QPen(accent, 4));
+    p.drawLine(22, 38, 42, 38);
   } else if (n == "error") {
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(210, 50, 40));

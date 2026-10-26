@@ -4,6 +4,8 @@
 
 #include <TopoDS_Shape.hxx>
 #include <gp_Ax3.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_XYZ.hxx>
 
 #include <memory>
 #include <string>
@@ -23,7 +25,9 @@ public:
   // Body after this feature, given the body before it.
   // Throws std::runtime_error with a user-facing message on failure.
   virtual TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const = 0;
-  // History index of the sketch this feature consumes, -1 if none.
+  // History index of the feature this one is built from (a sketch, or the
+  // patterned feature for a pattern), -1 if none. Deleting that feature
+  // deletes this one too.
   virtual int sketchInput() const { return -1; }
   virtual void setSketchInput(int) {}
 };
@@ -57,6 +61,7 @@ public:
 
   std::string name() const override { return "Extrude"; }
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  TopoDS_Shape tool(const Document& doc) const; // the extruded solid on its own
   int sketchInput() const override { return sketch; }
   void setSketchInput(int s) override { sketch = s; }
 };
@@ -71,6 +76,7 @@ public:
 
   std::string name() const override { return "Revolve"; }
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  TopoDS_Shape tool(const Document& doc) const; // the revolved solid on its own
   int sketchInput() const override { return sketch; }
   void setSketchInput(int s) override { sketch = s; }
 };
@@ -96,6 +102,36 @@ public:
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
 };
 
+// Hollows the body out to a wall `thickness`, leaving the selected faces open
+// (face indices as with fillets: by position in the body's face map).
+class ShellFeature : public FeatureOf<ShellFeature> {
+public:
+  std::vector<int> faces;
+  double thickness = 2;
+
+  std::string name() const override { return "Shell"; }
+  TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+};
+
+// Repeats an extrude or revolve: `count` copies in total (the original
+// included), in a row along a world axis or around a world axis through the origin.
+class PatternFeature : public FeatureOf<PatternFeature> {
+public:
+  enum class Kind { Linear, Circular };
+  enum class Axis { X, Y, Z };
+  int source = -1; // history index of the extrude/revolve to repeat
+  Kind kind = Kind::Linear;
+  Axis axis = Axis::X;
+  int count = 3;
+  double spacing = 20; // linear: distance between copies (mm)
+  double angle = 360;  // circular: total angle the copies are spread over (deg)
+
+  std::string name() const override { return "Pattern"; }
+  TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  int sketchInput() const override { return source; }
+  void setSketchInput(int s) override { source = s; }
+};
+
 // A shape from a STEP/IGES/BREP file, joined to the body.
 class ImportFeature : public FeatureOf<ImportFeature> {
 public:
@@ -108,6 +144,20 @@ public:
 
 // 1-based index of `edge` in `body`'s edge map, 0 if not found.
 int edgeIndex(const TopoDS_Shape& body, const TopoDS_Shape& edge);
+// Same for faces.
+int faceIndex(const TopoDS_Shape& body, const TopoDS_Shape& face);
+
+struct MassProperties {
+  double volume = 0; // mm^3
+  double area = 0;   // mm^2
+  gp_Pnt center;     // centre of mass
+  gp_XYZ size;       // bounding box extents along X, Y, Z
+};
+MassProperties massProperties(const TopoDS_Shape& shape);
+
+// Human-readable measurement of one or two picked sub-shapes (vertex, edge,
+// face): lengths, areas, diameters, distances and angles. Empty if nothing fits.
+std::string measure(const std::vector<TopoDS_Shape>& picked);
 
 class Document {
 public:

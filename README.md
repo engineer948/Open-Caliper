@@ -9,7 +9,10 @@ Every step stays editable in the timeline.
 
 - 2D sketches: lines, circles, arcs, with constraints (coincident, horizontal,
   vertical, parallel, perpendicular, tangent, equal, fix) and dimensions
-- Extrude, revolve, fillet, chamfer; join, cut, intersect
+- Rectangle, polygon and slot tools, construction (helper) geometry, constraint
+  labels on the sketch, undo inside sketches
+- Extrude, revolve, fillet, chamfer, shell, linear and circular patterns; join, cut, intersect
+- Measure distances, angles, lengths and areas; volume, size and weight of the part
 - Sketch on the origin planes or on any flat face of the part
 - Dimensions on the model: hole diameters, sketch sizes and extrude depths;
   double-click one to change it and the part rebuilds

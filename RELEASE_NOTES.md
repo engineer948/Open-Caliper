@@ -1,24 +1,33 @@
-## OpenCaliper 0.2.0
+## OpenCaliper 0.3.0
 
 ### What's new
 
-- **OpenCaliper is now part of Open Workshop Tools**, a family of free,
-  open-source design tools: https://github.com/open-workshop-tools.
-  The project's new home is https://github.com/open-workshop-tools/Open-Caliper
-  (old links redirect automatically).
-- **New application ID:** `io.github.open_workshop_tools.OpenCaliper`.
-  If you installed an earlier Flatpak, remove the old one first:
-  `flatpak uninstall io.github.engineer948.OpenCaliper`
+**Sketching**
+- **Rectangle**, **polygon** (any number of sides, always regular) and **slot**
+  tools. Shortcuts: R, G, K.
+- **Construction geometry** (X): turn curves into dashed helper lines and
+  circles that guide the sketch but never become part of the solid.
+- **Constraint labels**: H, V, //, 90°, =, T, the sizes you gave and F for
+  fixed points are shown next to the geometry.
+- **Undo and redo inside a sketch** with Ctrl+Z / Ctrl+Y.
 
-### Also in this release (since 0.1.0)
+**Modelling**
+- **Shell** (Shift+H): hollow the part out to a wall thickness, leaving the
+  faces you clicked open. Perfect for boxes and enclosures.
+- **Pattern** (Shift+P): repeat an extrude or revolve, such as a hole, in a
+  row along X, Y or Z, or around an axis.
 
-- **Dimensions on the part.** Hole diameters, arc radii, the sizes you gave in
-  sketches and extrude depths are shown on the model. Double-click one, type a
-  new value and the part rebuilds. View > Show Dimensions turns them off.
-- **Simpler Windows package.** The Microsoft C++ runtime ships next to
-  `OpenCaliper.exe`, so there is no separate `vc_redist.x64.exe` to install, and
-  the unused Qt network libraries are no longer included.
-- Windows builds with Open CASCADE 8.
+**Measuring**
+- **Measure** (M): click one or two points, edges or faces for lengths,
+  areas, diameters, distances and angles.
+- **Properties** (Shift+M): volume, surface area, size, centre of mass and
+  weight in PLA, PETG, ABS, nylon, aluminium, steel, brass or wood.
+
+**Fixes**
+- Lines joined to arcs at their ends now really stay tangent when the sketch
+  changes.
+
+Projects from 0.1 and 0.2 open unchanged.
 
 ---
 
@@ -61,7 +70,6 @@ in the README.
 - Fillets and chamfers remember edges by number. Changing an earlier step
   that adds or removes edges can make them fail (marked red in the timeline)
   or round a different edge.
-- No undo inside a sketch yet (undo works on whole steps).
 - The 3D view runs through X11 on Linux (XWayland on Wayland desktops).
 - x86-64 only; no macOS build yet. The Windows build is not code-signed, so
   SmartScreen may ask for confirmation.
