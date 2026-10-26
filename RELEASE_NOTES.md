@@ -1,19 +1,24 @@
-## OpenCaliper 0.1.1
+## OpenCaliper 0.2.0
 
-### What's new since 0.1.0
+### What's new
+
+- **OpenCaliper is now part of Open Workshop Tools**, a family of free,
+  open-source design tools: https://github.com/open-workshop-tools.
+  The project's new home is https://github.com/open-workshop-tools/Open-Caliper
+  (old links redirect automatically).
+- **New application ID:** `io.github.open_workshop_tools.OpenCaliper`.
+  If you installed an earlier Flatpak, remove the old one first:
+  `flatpak uninstall io.github.engineer948.OpenCaliper`
+
+### Also in this release (since 0.1.0)
 
 - **Dimensions on the part.** Hole diameters, arc radii, the sizes you gave in
-  sketches and extrude depths are now shown on the model. Double-click one,
-  type a new value and the part rebuilds. View > Show Dimensions turns them off.
-- **Simpler Windows package.** The Microsoft C++ runtime now ships next to
+  sketches and extrude depths are shown on the model. Double-click one, type a
+  new value and the part rebuilds. View > Show Dimensions turns them off.
+- **Simpler Windows package.** The Microsoft C++ runtime ships next to
   `OpenCaliper.exe`, so there is no separate `vc_redist.x64.exe` to install, and
   the unused Qt network libraries are no longer included.
 - Windows builds with Open CASCADE 8.
-- The project moved to the **Open Workshop Tools** organization:
-  https://github.com/open-workshop-tools/Open-Caliper. The Flatpak ID is now
-  `io.github.open_workshop_tools.OpenCaliper`. If you installed the 0.1.0
-  Flatpak, remove the old one with
-  `flatpak uninstall io.github.engineer948.OpenCaliper`.
 
 ---
 
