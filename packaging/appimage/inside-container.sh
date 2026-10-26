@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SRC=${SRC:-/src}
-APP_ID=io.github.engineer948.OpenCaliper
+APP_ID=io.github.open_workshop_tools.OpenCaliper
 OCCT_TAG=V7_9_3
 CACHE=$SRC/packaging/appimage/.cache
 OCCT_PREFIX=$CACHE/occt-$OCCT_TAG

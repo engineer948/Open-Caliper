@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-APP_ID=io.github.engineer948.OpenCaliper
+APP_ID=io.github.open_workshop_tools.OpenCaliper
 MANIFEST="$ROOT/packaging/flatpak/$APP_ID.yml"
 cd "$ROOT"
 

@@ -5,6 +5,6 @@
     <comment>OpenCaliper project</comment>
     <sub-class-of type="application/json"/>
     <glob pattern="*.ocal"/>
-    <icon name="io.github.engineer948.OpenCaliper"/>
+    <icon name="io.github.open_workshop_tools.OpenCaliper"/>
   </mime-type>
 </mime-info>

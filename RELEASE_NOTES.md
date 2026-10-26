@@ -9,6 +9,11 @@
   `OpenCaliper.exe`, so there is no separate `vc_redist.x64.exe` to install, and
   the unused Qt network libraries are no longer included.
 - Windows builds with Open CASCADE 8.
+- The project moved to the **Open Workshop Tools** organization:
+  https://github.com/open-workshop-tools/Open-Caliper. The Flatpak ID is now
+  `io.github.open_workshop_tools.OpenCaliper`. If you installed the 0.1.0
+  Flatpak, remove the old one with
+  `flatpak uninstall io.github.engineer948.OpenCaliper`.
 
 ---
 
@@ -23,7 +28,7 @@ mechanical parts and objects for 3D printing.
 | Linux, any distribution with Flatpak (also RHEL 9, openSUSE Leap, older systems) | `OpenCaliper.flatpak` |
 | Windows 10 / 11, 64-bit | `OpenCaliper-windows-x64.zip` |
 
-Not sure which one? See [Which Linux file should I use?](https://github.com/engineer948/Open-Caliper#which-linux-file-should-i-use)
+Not sure which one? See [Which Linux file should I use?](https://github.com/open-workshop-tools/Open-Caliper#which-linux-file-should-i-use)
 in the README.
 
 ### What you can do

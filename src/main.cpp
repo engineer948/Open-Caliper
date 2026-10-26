@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("OpenCaliper");
   QApplication::setApplicationVersion(OPENCALIPER_VERSION);
-  QApplication::setDesktopFileName("io.github.engineer948.OpenCaliper"); // taskbar icon on Wayland/X11
+  QApplication::setDesktopFileName("io.github.open_workshop_tools.OpenCaliper"); // taskbar icon on Wayland/X11
   QApplication::setStyle("Fusion"); // same look on every platform
   MainWindow w;
   w.show();

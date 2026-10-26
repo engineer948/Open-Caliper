@@ -339,7 +339,7 @@ void MainWindow::buildHelpMenu() {
         this, tr("About OpenCaliper"),
         tr("<h3>OpenCaliper %1</h3>"
            "<p>A simple parametric 3D CAD program.<br>"
-           "<a href=\"https://github.com/engineer948/Open-Caliper\">github.com/engineer948/Open-Caliper</a></p>"
+           "<a href=\"https://github.com/open-workshop-tools/Open-Caliper\">github.com/open-workshop-tools/Open-Caliper</a></p>"
            "<p>Copyright &copy; 2026 engineer948 and contributors. Released under the MIT license.</p>"
            "<p>This software makes use of, and is based on facilities provided by, the "
            "<b>Open CASCADE Technology</b> software (LGPL 2.1 with the Open CASCADE exception).<br>"

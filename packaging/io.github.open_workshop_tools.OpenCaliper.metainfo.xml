@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.engineer948.OpenCaliper</id>
+  <id>io.github.open_workshop_tools.OpenCaliper</id>
   <name>OpenCaliper</name>
   <summary>Simple parametric 3D CAD</summary>
-  <developer id="io.github.engineer948">
-    <name>engineer948</name>
+  <developer id="io.github.open_workshop_tools">
+    <name>Open Workshop Tools</name>
   </developer>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
@@ -21,13 +21,13 @@
     </ul>
     <p>It is built on Open CASCADE Technology and Qt.</p>
   </description>
-  <launchable type="desktop-id">io.github.engineer948.OpenCaliper.desktop</launchable>
-  <url type="homepage">https://github.com/engineer948/Open-Caliper</url>
-  <url type="bugtracker">https://github.com/engineer948/Open-Caliper/issues</url>
+  <launchable type="desktop-id">io.github.open_workshop_tools.OpenCaliper.desktop</launchable>
+  <url type="homepage">https://github.com/open-workshop-tools/Open-Caliper</url>
+  <url type="bugtracker">https://github.com/open-workshop-tools/Open-Caliper/issues</url>
   <screenshots>
     <screenshot type="default">
       <caption>A part with a sketch, an extrusion and a fillet</caption>
-      <image>https://raw.githubusercontent.com/engineer948/Open-Caliper/main/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/open-workshop-tools/Open-Caliper/main/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <provides>

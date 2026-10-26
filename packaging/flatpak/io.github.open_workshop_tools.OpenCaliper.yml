@@ -1,6 +1,6 @@
 # Builds a standalone OpenCaliper.flatpak bundle (not published on Flathub).
 # Easiest: packaging/flatpak/build-flatpak.sh   (CI: .github/workflows/build.yml)
-app-id: io.github.engineer948.OpenCaliper
+app-id: io.github.open_workshop_tools.OpenCaliper
 runtime: org.kde.Platform
 runtime-version: '6.10'
 sdk: org.kde.Sdk

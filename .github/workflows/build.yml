@@ -39,7 +39,7 @@ jobs:
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: OpenCaliper.flatpak
-          manifest-path: packaging/flatpak/io.github.engineer948.OpenCaliper.yml
+          manifest-path: packaging/flatpak/io.github.open_workshop_tools.OpenCaliper.yml
           cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/*.yml') }}
 
   windows:

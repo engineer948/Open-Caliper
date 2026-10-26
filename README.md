@@ -21,11 +21,11 @@ Every step stays editable in the timeline.
 
 | System | File |
 |---|---|
-| Linux (most distributions) | [**OpenCaliper-x86_64.AppImage**](https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper-x86_64.AppImage) |
-| Linux (any distribution with Flatpak) | [**OpenCaliper.flatpak**](https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper.flatpak) |
-| Windows 10 / 11 (64-bit) | [**OpenCaliper-windows-x64.zip**](https://github.com/engineer948/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.zip) |
+| Linux (most distributions) | [**OpenCaliper-x86_64.AppImage**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-x86_64.AppImage) |
+| Linux (any distribution with Flatpak) | [**OpenCaliper.flatpak**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper.flatpak) |
+| Windows 10 / 11 (64-bit) | [**OpenCaliper-windows-x64.zip**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.zip) |
 
-All versions: [Releases page](https://github.com/engineer948/Open-Caliper/releases).
+All versions: [Releases page](https://github.com/open-workshop-tools/Open-Caliper/releases).
 
 ### Which Linux file should I use?
 
@@ -70,7 +70,7 @@ double-click it.
 **Flatpak**
 ```sh
 flatpak install --user OpenCaliper.flatpak
-flatpak run io.github.engineer948.OpenCaliper
+flatpak run io.github.open_workshop_tools.OpenCaliper
 ```
 Afterwards OpenCaliper is in your application menu. The Flatpak is not on
 Flathub; to update, download the new file and install it again.
