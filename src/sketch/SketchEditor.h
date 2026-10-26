@@ -1,5 +1,6 @@
 #pragma once
 
+#include "model/Expression.h"
 #include "sketch/Sketch.h"
 #include "view/Viewer.h"
 
@@ -9,13 +10,15 @@
 
 #include <QObject>
 
+#include <functional>
+
 // Interactive 2D sketching on a plane of the 3D view.
 // Left click = current tool, right click / Esc = stop, Delete = remove selection,
 // middle drag = pan, wheel = zoom.
 class SketchEditor : public QObject, public InputHandler {
   Q_OBJECT
 public:
-  enum class Tool { Select, Line, Rectangle, Circle, Arc, Polygon, Slot };
+  enum class Tool { Select, Line, Rectangle, Circle, Arc, Polygon, Slot, Trim, Fillet };
 
   explicit SketchEditor(Viewer* viewer, QObject* parent = nullptr);
 
@@ -29,7 +32,11 @@ public:
   void dimension();                           // length, radius or distance
   void toggleFix();
   void toggleConstruction(); // helper geometry: shown dashed, never becomes a solid
+  void offsetSelection();
+  void mirrorSelection(); // across the last selected line
   void deleteSelection();
+  // Parameter values for sizes typed as expressions ("width / 2").
+  void setVariables(model::Variables vars) { m_vars = std::move(vars); }
   void setPolygonSides(int sides) { m_polygonSides = sides; }
   int polygonSides() const { return m_polygonSides; }
 
@@ -78,6 +85,10 @@ private:
   void addSlot(const Pick& c1, const Pick& c2, const Pick& side);
   void remember(); // snapshot for undo, before a change
   void forget();   // drop that snapshot again (the change was refused)
+  // Runs an edit as one undo step; restores the sketch if it fails or cannot be solved.
+  bool applyEdit(const std::function<bool()>& edit, const QString& failure);
+  // Asks for a size; accepts numbers and parameter expressions.
+  bool askValue(const QString& title, const QString& label, double& value, std::string& expr, bool positive = true);
   bool tryConstraints(const std::vector<sketch::Constraint>& cs);
   void cancelOperation();
   void reportState();
@@ -98,6 +109,9 @@ private:
   int m_dragPoint = -1;
   bool m_dragRemembered = false;
   int m_polygonSides = 6;
+  double m_filletRadius = 2, m_offsetDistance = 2;
+  int m_hoverEntity = -1; // trim tool: the curve under the mouse
+  model::Variables m_vars;
   std::vector<sketch::Sketch> m_undo, m_redo;
 
   Handle(AIS_Shape) m_aisNormal, m_aisConstruction, m_aisSelected, m_aisPreview;

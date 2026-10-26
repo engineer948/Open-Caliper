@@ -15,6 +15,7 @@ bool aIsEntity(ConstraintKind k) {
   case ConstraintKind::Distance:
   case ConstraintKind::PointOnLine:
   case ConstraintKind::PointOnCircle:
+  case ConstraintKind::Symmetric:
     return false;
   default:
     return true;
@@ -118,6 +119,7 @@ bool Sketch::valid() const {
     case ConstraintKind::PointOnLine: ok = point(c.a) && line(c.b); break;
     case ConstraintKind::PointOnCircle: ok = point(c.a) && circular(c.b); break;
     case ConstraintKind::Radius: ok = circular(c.a); break;
+    case ConstraintKind::Symmetric: ok = point(c.a) && point(c.b) && line(c.c); break;
     }
     if (!ok) return false;
   }
@@ -164,13 +166,33 @@ int Sketch::addConstraint(const Constraint& c) {
 
 void Sketch::removeEntity(int e) {
   std::erase_if(constraints, [e](const Constraint& c) {
-    return (aIsEntity(c.kind) && c.a == e) || (bIsEntity(c.kind) && c.b == e);
+    return (aIsEntity(c.kind) && c.a == e) || (bIsEntity(c.kind) && c.b == e) || c.c == e;
   });
   for (Constraint& c : constraints) {
     if (aIsEntity(c.kind) && c.a > e) --c.a;
     if (bIsEntity(c.kind) && c.b > e) --c.b;
+    if (c.c > e) --c.c;
   }
   entities.erase(entities.begin() + e);
+}
+
+std::vector<int> Sketch::usedPoints() const {
+  std::vector<bool> used(points.size(), false);
+  for (const Entity& e : entities)
+    for (int p : e.p)
+      if (p >= 0) used[p] = true;
+  std::vector<int> result;
+  for (int i = 0; i < int(used.size()); ++i)
+    if (used[i]) result.push_back(i);
+  return result;
+}
+
+void Sketch::dropDanglingConstraints() {
+  std::vector<bool> used(points.size(), false);
+  for (int p : usedPoints()) used[p] = true;
+  std::erase_if(constraints, [&](const Constraint& c) {
+    return (!aIsEntity(c.kind) && !used[c.a]) || (c.b >= 0 && !bIsEntity(c.kind) && !used[c.b]);
+  });
 }
 
 void Sketch::setPoint(int pt, double x, double y) {
@@ -288,6 +310,13 @@ void Sketch::residuals(const std::vector<double>& p, std::vector<double>& out) c
     case ConstraintKind::Radius:
       out.push_back(rad(c.a) - c.value);
       break;
+    case ConstraintKind::Symmetric: { // midpoint on the line, a -> b across it
+      const int p0 = entities[c.c].p[0];
+      const double mx = (X(c.a) + X(c.b)) / 2, my = (Y(c.a) + Y(c.b)) / 2;
+      out.push_back((dx(c.c) * (my - Y(p0)) - dy(c.c) * (mx - X(p0))) / (len(c.c) + kEps));
+      out.push_back((dx(c.c) * (X(c.b) - X(c.a)) + dy(c.c) * (Y(c.b) - Y(c.a))) / (len(c.c) + kEps));
+      break;
+    }
     }
   }
 }

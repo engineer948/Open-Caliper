@@ -10,11 +10,14 @@
 #include <QMainWindow>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 class QAction;
 class QLabel;
 class QListWidget;
+class QLockFile;
+class QMenu;
 class QToolBar;
 class Viewer;
 
@@ -22,9 +25,12 @@ class MainWindow : public QMainWindow {
   Q_OBJECT
 public:
   explicit MainWindow(QWidget* parent = nullptr);
+  ~MainWindow() override;
 
   Viewer* viewer() const { return m_viewer; }
   bool openProject(const QString& path);
+  // Offers work left behind by a session that crashed; call once at startup.
+  void recoverAutosave();
 
 protected:
   void closeEvent(QCloseEvent* e) override;
@@ -52,6 +58,9 @@ private:
   void filletOrChamfer(bool fillet, int editIndex = -1);
   void shell(int editIndex = -1);
   void pattern(int editIndex = -1);
+  void hole(int editIndex = -1);
+  void mirror(int editIndex = -1);
+  void editParameters();
   void measure();
   void showProperties();
   void editFeature(int index);
@@ -60,6 +69,8 @@ private:
   TopoDS_Face selectedFace() const;
   std::vector<int> selectedFaces() const;
   std::vector<TopoDS_Shape> selectedShapes() const; // picked vertices, edges, faces of the body
+  // Keys of the body's edges/faces with these indices, to find them again later.
+  std::vector<model::ShapeKey> keysOf(const std::vector<int>& indices, TopAbs_ShapeEnum kind) const;
 
   // document changes: every change goes through these, for undo
   bool addFeature(std::unique_ptr<model::Feature> feature);
@@ -79,6 +90,10 @@ private:
   void importFile();
   void exportFile();
   void setProjectPath(const QString& path);
+  void addRecent(const QString& path);
+  void fillRecentMenu();
+  void autosave();
+  void clearAutosave();
 
   // display
   void refreshScene();
@@ -105,6 +120,9 @@ private:
   QToolBar* m_constraintBar = nullptr;
   QListWidget* m_timeline = nullptr;
   QLabel* m_hint = nullptr;
+  QMenu* m_recentMenu = nullptr;
+  QString m_autosavePath; // this window's crash backup
+  std::unique_ptr<QLockFile> m_autosaveLock; // held while running: a backup without a holder is left from a crash
 
   Handle(AIS_Shape) m_bodyAis;
   std::vector<std::pair<Handle(AIS_Shape), int>> m_sketchAis; // shown sketch -> history index

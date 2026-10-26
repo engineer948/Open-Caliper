@@ -210,6 +210,52 @@ void drawIcon(QPainter& p, const QString& n, const QColor& ink, const QColor& ac
     p.setPen(QPen(Qt::white, 7, Qt::SolidLine, Qt::RoundCap));
     p.drawLine(32, 18, 32, 36);
     p.drawPoint(32, 47);
+  } else if (n == "trim") { // two crossing lines, one arm cut away
+    p.drawLine(32, 8, 32, 56);
+    p.drawLine(8, 32, 32, 32);
+    p.setPen(QPen(accent, 4, Qt::DashLine, Qt::RoundCap));
+    p.drawLine(36, 32, 56, 32);
+  } else if (n == "sketch-fillet") {
+    QPainterPath path;
+    path.moveTo(10, 54);
+    path.lineTo(10, 34);
+    path.quadTo(10, 10, 34, 10);
+    path.lineTo(54, 10);
+    p.drawPath(path);
+    dot(10, 34);
+    dot(34, 10);
+  } else if (n == "offset") {
+    p.drawRoundedRect(QRectF(20, 20, 24, 24), 2, 2);
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawRoundedRect(QRectF(8, 8, 48, 48), 4, 4);
+  } else if (n == "mirror") {
+    p.drawPolygon(QPolygonF({QPointF(26, 14), QPointF(26, 50), QPointF(8, 50)}));
+    p.setPen(QPen(accent, 4, Qt::DashLine, Qt::RoundCap));
+    p.drawLine(32, 6, 32, 58);
+    p.setPen(QPen(ink, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPolygon(QPolygonF({QPointF(38, 14), QPointF(38, 50), QPointF(56, 50)}));
+  } else if (n == "symmetric") {
+    p.setPen(QPen(accent, 4, Qt::DashLine, Qt::RoundCap));
+    p.drawLine(32, 6, 32, 58);
+    dot(14, 32);
+    dot(50, 32);
+    p.drawLine(18, 32, 26, 32);
+    p.drawLine(38, 32, 46, 32);
+  } else if (n == "hole") {
+    box3d(16);
+    p.setPen(QPen(accent, 4));
+    p.drawEllipse(QPointF(32, 26), 9, 5);
+    p.drawLine(23, 26, 23, 44);
+    p.drawLine(41, 26, 41, 44);
+  } else if (n == "parameters") {
+    QFont f = p.font();
+    f.setPixelSize(30);
+    f.setBold(true);
+    f.setItalic(true);
+    p.setFont(f);
+    p.drawText(QRectF(4, 4, 56, 56), Qt::AlignCenter, "f(x)");
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(10, 54, 54, 54);
   } else if (n == "import") {
     box3d(16);
     p.setPen(QPen(accent, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));

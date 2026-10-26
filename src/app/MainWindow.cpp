@@ -6,6 +6,8 @@
 #include "view/Viewer.h"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <TopoDS.hxx>
@@ -20,9 +22,23 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDir>
+#include <QFile>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
+#include <QLockFile>
+#include <QPushButton>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTableWidget>
+#include <QTimer>
+#include <QUuid>
+#include <QVBoxLayout>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -33,6 +49,7 @@
 #include <QToolBar>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 using K = sketch::ConstraintKind;
@@ -42,28 +59,81 @@ namespace {
 
 constexpr size_t kMaxUndo = 100;
 
+QString num(double v) { return QString::number(v, 'g', 6); }
+
+// Size entry that also takes formulas with parameters ("width / 2"); the
+// result is shown next to it as you type.
+class SizeField : public QWidget {
+public:
+  SizeField(QWidget* parent, const Variables& vars, double value, const std::string& expr, double min, double max,
+            const QString& suffix, bool integer)
+      : QWidget(parent), m_vars(vars), m_min(min), m_max(max), m_suffix(suffix), m_integer(integer) {
+    auto* row = new QHBoxLayout(this);
+    row->setContentsMargins(0, 0, 0, 0);
+    m_edit = new QLineEdit(expr.empty() ? num(value) : QString::fromStdString(expr), this);
+    m_edit->setToolTip(QObject::tr("A number, or a formula with parameters such as width / 2"));
+    m_result = new QLabel(this);
+    m_result->setMinimumWidth(100);
+    row->addWidget(m_edit, 1);
+    row->addWidget(m_result);
+    QObject::connect(m_edit, &QLineEdit::textChanged, this, [this] {
+      QString error;
+      check(error);
+    });
+    QString error;
+    check(error);
+    m_edit->selectAll();
+  }
+  // Evaluates the text; false with `error` set when it is not a valid value.
+  bool check(QString& error) {
+    const std::string text = m_edit->text().trimmed().toStdString();
+    try {
+      double v = model::evaluate(text, m_vars);
+      if (m_integer) v = std::round(v);
+      if (v < m_min || v > m_max)
+        throw std::runtime_error(QObject::tr("The value must be between %1 and %2.").arg(num(m_min), num(m_max)).toStdString());
+      m_value = v;
+      m_expr = model::isPlainNumber(text) ? std::string() : text;
+      m_result->setText(m_expr.empty() ? m_suffix.trimmed() : "= " + num(v) + m_suffix);
+      m_result->setStyleSheet({});
+      return true;
+    } catch (const std::exception& e) {
+      error = QString::fromStdString(e.what());
+      m_result->setText(QObject::tr("not valid"));
+      m_result->setStyleSheet("color: #c8281e");
+      return false;
+    }
+  }
+  double value() const { return m_value; }
+  const std::string& expression() const { return m_expr; } // empty for a plain number
+  void setValue(double v) { m_edit->setText(num(v)); }
+  QLineEdit* edit() const { return m_edit; }
+
+private:
+  const Variables& m_vars;
+  double m_min, m_max;
+  QString m_suffix;
+  bool m_integer;
+  QLineEdit* m_edit;
+  QLabel* m_result;
+  double m_value = 0;
+  std::string m_expr;
+};
+
 // Small form dialog: label/widget rows plus OK/Cancel.
 class FormDialog : public QDialog {
 public:
-  FormDialog(QWidget* parent, const QString& title) : QDialog(parent), m_form(new QFormLayout(this)) {
+  FormDialog(QWidget* parent, const QString& title, const Variables& vars = {})
+      : QDialog(parent), m_form(new QFormLayout(this)), m_vars(vars) {
     setWindowTitle(title);
   }
-  QDoubleSpinBox* number(const QString& label, double value, double min, double max, const QString& suffix) {
-    auto* box = new QDoubleSpinBox(this);
-    box->setRange(min, max);
-    box->setDecimals(3);
-    box->setValue(value);
-    box->setSuffix(suffix);
-    box->selectAll();
-    m_form->addRow(label, box);
-    return box;
-  }
-  QSpinBox* integer(const QString& label, int value, int min, int max) {
-    auto* box = new QSpinBox(this);
-    box->setRange(min, max);
-    box->setValue(value);
-    m_form->addRow(label, box);
-    return box;
+  SizeField* size(const QString& label, double value, const std::string& expr, double min, double max,
+                  const QString& suffix, bool integer = false) {
+    auto* field = new SizeField(this, m_vars, value, expr, min, max, suffix, integer);
+    m_form->addRow(label, field);
+    m_sizes.push_back(field);
+    if (m_sizes.size() == 1) field->edit()->setFocus();
+    return field;
   }
   QLabel* text(const QString& label, const QString& value) {
     auto* l = new QLabel(value, this);
@@ -80,7 +150,17 @@ public:
   }
   bool run() {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::accepted, this, [this] {
+      for (SizeField* f : m_sizes) {
+        QString error;
+        if (f->isEnabled() && !f->check(error)) {
+          QMessageBox::warning(this, windowTitle(), error);
+          f->edit()->setFocus();
+          return;
+        }
+      }
+      accept();
+    });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     m_form->addRow(buttons);
     return exec() == QDialog::Accepted;
@@ -88,7 +168,21 @@ public:
 
 private:
   QFormLayout* m_form;
+  Variables m_vars; // a copy: the fields refer to it
+  std::vector<SizeField*> m_sizes;
 };
+
+// The formula stored for `field` of `f` (empty when it is a plain number or f is null).
+std::string exprOf(const Feature* f, const std::string& field) {
+  if (!f) return {};
+  const auto it = f->expressions.find(field);
+  return it == f->expressions.end() ? std::string() : it->second;
+}
+
+void setExpr(Feature& f, const std::string& field, const SizeField* size) {
+  if (size->expression().empty()) f.expressions.erase(field);
+  else f.expressions[field] = size->expression();
+}
 
 QComboBox* operationChoice(FormDialog& dlg, bool hasBody, Operation current) {
   QComboBox* op = dlg.choice(QObject::tr("Operation:"), {QObject::tr("Join"), QObject::tr("Cut"), QObject::tr("Intersect")},
@@ -108,8 +202,6 @@ QString opName(Operation op) {
   }
   return {};
 }
-
-QString num(double v) { return QString::number(v, 'g', 6); }
 
 } // namespace
 
@@ -133,10 +225,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   buildTimeline();
   buildHelpMenu();
 
+  // Crash backup, written every minute while there are unsaved changes. The
+  // lock file tells a later start whether this window is still running.
+  const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/autosave";
+  QDir().mkpath(dir);
+  const QString id = QUuid::createUuid().toString(QUuid::Id128).left(12);
+  m_autosavePath = dir + "/" + id + "." + project::kExtension;
+  m_autosaveLock = std::make_unique<QLockFile>(dir + "/" + id + ".lock");
+  m_autosaveLock->tryLock(0);
+  auto* timer = new QTimer(this);
+  connect(timer, &QTimer::timeout, this, &MainWindow::autosave);
+  timer->start(60 * 1000);
+
   setProjectPath({});
   refreshTimeline();
   updateActions();
 }
+
+MainWindow::~MainWindow() = default;
 
 // --- UI construction ------------------------------------------------------------
 
@@ -159,11 +265,14 @@ void MainWindow::buildFileMenu() {
   };
   add(action(tr("&New"), "", QKeySequence::New), &MainWindow::newProject);
   add(action(tr("&Open..."), "", QKeySequence::Open), &MainWindow::openProjectDialog);
+  m_recentMenu = m->addMenu(tr("Open &Recent"));
+  connect(m_recentMenu, &QMenu::aboutToShow, this, &MainWindow::fillRecentMenu);
+  m_modelActions << m_recentMenu->menuAction();
   add(action(tr("&Save"), "", QKeySequence::Save), &MainWindow::save);
   add(action(tr("Save &As..."), "", QKeySequence::SaveAs), &MainWindow::saveAs);
   m->addSeparator();
   add(action(tr("&Import STEP / IGES / BREP..."), "import", QKeySequence("Ctrl+I")), &MainWindow::importFile);
-  add(action(tr("&Export STEP / IGES / STL / OBJ / BREP..."), "", QKeySequence("Ctrl+E")), &MainWindow::exportFile);
+  add(action(tr("&Export STEP / IGES / STL / OBJ / 3MF / BREP..."), "", QKeySequence("Ctrl+E")), &MainWindow::exportFile);
   m->addSeparator();
   QAction* quit = action(tr("&Quit"), "", QKeySequence::Quit);
   connect(quit, &QAction::triggered, this, &QWidget::close);
@@ -255,7 +364,9 @@ void MainWindow::buildSketchUi() {
       {tr("Circle"), "circle", "C", SketchEditor::Tool::Circle},
       {tr("Arc"), "arc", "A", SketchEditor::Tool::Arc},
       {tr("Polygon"), "polygon", "G", SketchEditor::Tool::Polygon},
-      {tr("Slot"), "slot", "K", SketchEditor::Tool::Slot}};
+      {tr("Slot"), "slot", "K", SketchEditor::Tool::Slot},
+      {tr("Trim"), "trim", "W", SketchEditor::Tool::Trim},
+      {tr("Fillet"), "sketch-fillet", "N", SketchEditor::Tool::Fillet}};
   for (const auto& [text, icon, key, t] : toolList) {
     QAction* a = action(text, icon, QKeySequence(key));
     a->setCheckable(true);
@@ -284,10 +395,18 @@ void MainWindow::buildSketchUi() {
   QAction* construction = action(tr("Construction"), "construction", QKeySequence("X"),
                                  tr("Turn the selected curves into dashed helper geometry that never becomes a solid"));
   connect(construction, &QAction::triggered, this, [this] { m_editor->toggleConstruction(); });
-  menu->addAction(construction);
+  QAction* offset = action(tr("Offset"), "offset", QKeySequence("O"),
+                           tr("Parallel copy of the selected curves; a closed shape grows or shrinks"));
+  connect(offset, &QAction::triggered, this, [this] { m_editor->offsetSelection(); });
+  QAction* mirrorCurves = action(tr("Mirror"), "mirror", QKeySequence("U"),
+                                 tr("Mirror the selected curves across the line selected last"));
+  connect(mirrorCurves, &QAction::triggered, this, [this] { m_editor->mirrorSelection(); });
   m_drawBar->addSeparator();
-  m_drawBar->addAction(construction);
-  m_sketchActions << construction;
+  for (QAction* a : {offset, mirrorCurves, construction}) {
+    menu->addAction(a);
+    m_drawBar->addAction(a);
+    m_sketchActions << a;
+  }
   menu->addSeparator();
 
   m_constraintBar = addToolBar(tr("Constraints"));
@@ -299,7 +418,8 @@ void MainWindow::buildSketchUi() {
       {tr("Parallel"), "parallel", "P", tr("Two lines"), K::Parallel},
       {tr("Perpendicular"), "perpendicular", "", tr("Two lines"), K::Perpendicular},
       {tr("Tangent"), "tangent", "T", tr("A line and a circle/arc"), K::Tangent},
-      {tr("Equal"), "equal", "E", tr("Two lines or two circles/arcs"), K::Equal}};
+      {tr("Equal"), "equal", "E", tr("Two lines or two circles/arcs"), K::Equal},
+      {tr("Symmetric"), "symmetric", "Y", tr("Two points and the line they mirror across"), K::Symmetric}};
   for (const auto& [text, icon, key, tip, k] : constraints) {
     QAction* a = action(text, icon, QKeySequence(key), tip);
     const K kind = k;
@@ -340,8 +460,17 @@ void MainWindow::buildModelUi() {
       [this] { filletOrChamfer(false); });
   add(action(tr("Shell"), "shell", QKeySequence("Shift+H"), tr("Hollow the part out, leaving the selected faces open")),
       [this] { shell(); });
-  add(action(tr("Pattern"), "pattern", QKeySequence("Shift+P"), tr("Repeat an extrude or revolve in a row or a circle")),
+  add(action(tr("Pattern"), "pattern", QKeySequence("Shift+P"), tr("Repeat an extrude, revolve or hole in a row or a circle")),
       [this] { pattern(); });
+  add(action(tr("Hole"), "hole", QKeySequence("Shift+D"),
+             tr("Screw holes at the circles of a sketch: simple, counterbored or countersunk")),
+      [this] { hole(); });
+  add(action(tr("Mirror"), "mirror", QKeySequence("Shift+U"), tr("Mirror the part across a plane or a face")),
+      [this] { mirror(); });
+  bar->addSeparator();
+  menu->addSeparator();
+  add(action(tr("Parameters"), "parameters", QKeySequence("Ctrl+P"), tr("Named sizes and formulas that drive the model")),
+      [this] { editParameters(); });
   bar->addSeparator();
   menu->addSeparator();
   add(action(tr("Measure"), "measure", QKeySequence("M"), tr("Click one or two points, edges or faces first")),
@@ -407,6 +536,7 @@ void MainWindow::startSketch(const gp_Ax3& plane) {
   m_editingSketch = -1;
   m_viewer->context()->ClearSelected(false); // the picked face would stay highlighted
   clearDimensions();
+  m_editor->setVariables(m_doc.values());
   m_editor->begin(plane);
   updateActions();
 }
@@ -488,6 +618,15 @@ std::vector<int> MainWindow::selectedFaces() const {
   return faces;
 }
 
+std::vector<ShapeKey> MainWindow::keysOf(const std::vector<int>& indices, TopAbs_ShapeEnum kind) const {
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(m_doc.body(), kind, map);
+  std::vector<ShapeKey> keys;
+  for (int i : indices)
+    if (i >= 1 && i <= map.Extent()) keys.push_back(shapeKey(m_doc.body(), map(i)));
+  return keys;
+}
+
 std::vector<TopoDS_Shape> MainWindow::selectedShapes() const {
   std::vector<TopoDS_Shape> shapes;
   const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
@@ -507,14 +646,15 @@ void MainWindow::extrude(int editIndex) {
     return;
   }
   const bool hasBody = !(old ? m_doc.bodyBefore(editIndex) : m_doc.body()).IsNull();
-  FormDialog dlg(this, tr("Extrude"));
-  QDoubleSpinBox* distance = dlg.number(tr("Distance:"), old ? old->distance : 10, -1e6, 1e6, " mm");
+  FormDialog dlg(this, tr("Extrude"), m_doc.values());
+  SizeField* distance = dlg.size(tr("Distance:"), old ? old->distance : 10, exprOf(old, "distance"), -1e6, 1e6, " mm");
   QComboBox* op = operationChoice(dlg, hasBody, old ? old->op : Operation::Join);
   if (!dlg.run()) return;
 
   auto f = std::make_unique<ExtrudeFeature>();
   f->sketch = sketch;
   f->distance = distance->value();
+  setExpr(*f, "distance", distance);
   f->op = Operation(op->currentIndex());
   if (old) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
@@ -528,10 +668,10 @@ void MainWindow::revolve(int editIndex) {
     return;
   }
   const bool hasBody = !(old ? m_doc.bodyBefore(editIndex) : m_doc.body()).IsNull();
-  FormDialog dlg(this, tr("Revolve"));
+  FormDialog dlg(this, tr("Revolve"), m_doc.values());
   QComboBox* axis = dlg.choice(tr("Axis:"), {tr("Sketch Y axis (vertical)"), tr("Sketch X axis (horizontal)")},
                                old && old->axis == RevolveFeature::Axis::SketchX ? 1 : 0);
-  QDoubleSpinBox* angle = dlg.number(tr("Angle:"), old ? old->angle : 360, 0.001, 360, QString::fromUtf8(" °"));
+  SizeField* angle = dlg.size(tr("Angle:"), old ? old->angle : 360, exprOf(old, "angle"), 0.001, 360, QString::fromUtf8(" °"));
   QComboBox* op = operationChoice(dlg, hasBody, old ? old->op : Operation::Join);
   if (!dlg.run()) return;
 
@@ -539,6 +679,7 @@ void MainWindow::revolve(int editIndex) {
   f->sketch = sketch;
   f->axis = axis->currentIndex() == 0 ? RevolveFeature::Axis::SketchY : RevolveFeature::Axis::SketchX;
   f->angle = angle->value();
+  setExpr(*f, "angle", angle);
   f->op = Operation(op->currentIndex());
   if (old) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
@@ -546,34 +687,41 @@ void MainWindow::revolve(int editIndex) {
 
 void MainWindow::filletOrChamfer(bool fillet, int editIndex) {
   const QString title = fillet ? tr("Fillet") : tr("Chamfer");
+  const char* field = fillet ? "radius" : "distance";
   std::vector<int> edges;
+  std::vector<ShapeKey> keys;
   double value = 1;
+  const Feature* old = editIndex >= 0 ? &m_doc.feature(editIndex) : nullptr;
   if (editIndex >= 0) {
-    if (const auto* f = m_doc.as<FilletFeature>(editIndex)) edges = f->edges, value = f->radius;
-    if (const auto* c = m_doc.as<ChamferFeature>(editIndex)) edges = c->edges, value = c->distance;
+    if (const auto* f = m_doc.as<FilletFeature>(editIndex)) edges = f->edges, keys = f->keys, value = f->radius;
+    if (const auto* c = m_doc.as<ChamferFeature>(editIndex)) edges = c->edges, keys = c->keys, value = c->distance;
   } else {
     edges = selectedEdges();
+    keys = keysOf(edges, TopAbs_EDGE);
   }
   if (edges.empty()) {
     hint(tr("%1: click one or more edges of the body first (Shift+click adds).").arg(title));
     return;
   }
-  FormDialog dlg(this, title);
-  QDoubleSpinBox* size = dlg.number(fillet ? tr("Radius:") : tr("Distance:"), value, 0.001, 1e6, " mm");
+  FormDialog dlg(this, title, m_doc.values());
+  SizeField* size = dlg.size(fillet ? tr("Radius:") : tr("Distance:"), value, exprOf(old, field), 0.001, 1e6, " mm");
   if (!dlg.run()) return;
 
   std::unique_ptr<Feature> f;
   if (fillet) {
     auto fi = std::make_unique<FilletFeature>();
     fi->edges = edges;
+    fi->keys = keys;
     fi->radius = size->value();
     f = std::move(fi);
   } else {
     auto c = std::make_unique<ChamferFeature>();
     c->edges = edges;
+    c->keys = keys;
     c->distance = size->value();
     f = std::move(c);
   }
+  setExpr(*f, field, size);
   if (editIndex >= 0) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
 }
@@ -585,42 +733,44 @@ void MainWindow::shell(int editIndex) {
     hint(tr("Shell: click the face(s) to leave open first, e.g. the top (Shift+click adds)."));
     return;
   }
-  FormDialog dlg(this, tr("Shell"));
-  QDoubleSpinBox* thickness = dlg.number(tr("Wall thickness:"), old ? old->thickness : 2, 0.01, 1e5, " mm");
+  FormDialog dlg(this, tr("Shell"), m_doc.values());
+  SizeField* thickness = dlg.size(tr("Wall thickness:"), old ? old->thickness : 2, exprOf(old, "thickness"), 0.01, 1e5, " mm");
   if (!dlg.run()) return;
   auto f = std::make_unique<ShellFeature>();
   f->faces = faces;
+  f->keys = old ? old->keys : keysOf(faces, TopAbs_FACE);
   f->thickness = thickness->value();
+  setExpr(*f, "thickness", thickness);
   if (old) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
 }
 
 void MainWindow::pattern(int editIndex) {
   const auto* old = editIndex >= 0 ? m_doc.as<PatternFeature>(editIndex) : nullptr;
-  // Extrudes and revolves before this step can be repeated.
+  // Extrudes, revolves and holes before this step can be repeated.
   const size_t end = old ? size_t(editIndex) : m_doc.size();
   std::vector<int> sources;
   QStringList names;
   for (size_t i = 0; i < end; ++i)
-    if (m_doc.as<ExtrudeFeature>(i) || m_doc.as<RevolveFeature>(i)) {
+    if (m_doc.as<ExtrudeFeature>(i) || m_doc.as<RevolveFeature>(i) || m_doc.as<HoleFeature>(i)) {
       sources.push_back(int(i));
       names << QString("%1. %2").arg(i + 1).arg(describe(i));
     }
   if (sources.empty()) {
-    hint(tr("Pattern: make an extrude or revolve first (for example a hole cut), then repeat it."));
+    hint(tr("Pattern: make an extrude, revolve or hole first (for example a hole cut), then repeat it."));
     return;
   }
   const int current = old ? int(std::find(sources.begin(), sources.end(), old->source) - sources.begin())
                           : int(sources.size()) - 1;
 
-  FormDialog dlg(this, tr("Pattern"));
+  FormDialog dlg(this, tr("Pattern"), m_doc.values());
   QComboBox* source = dlg.choice(tr("Repeat:"), names, std::clamp(current, 0, int(sources.size()) - 1));
   QComboBox* kind = dlg.choice(tr("Type:"), {tr("In a row (linear)"), tr("In a circle (circular)")},
                                old && old->kind == PatternFeature::Kind::Circular ? 1 : 0);
   QComboBox* axis = dlg.choice(tr("Axis:"), {tr("X"), tr("Y"), tr("Z")}, old ? int(old->axis) : 0);
-  QSpinBox* count = dlg.integer(tr("Copies (in total):"), old ? old->count : 3, 2, 500);
-  QDoubleSpinBox* spacing = dlg.number(tr("Spacing:"), old ? old->spacing : 20, -1e5, 1e5, " mm");
-  QDoubleSpinBox* angle = dlg.number(tr("Total angle:"), old ? old->angle : 360, 1, 360, QString::fromUtf8(" °"));
+  SizeField* count = dlg.size(tr("Copies (in total):"), old ? old->count : 3, exprOf(old, "count"), 2, 500, {}, true);
+  SizeField* spacing = dlg.size(tr("Spacing:"), old ? old->spacing : 20, exprOf(old, "spacing"), -1e5, 1e5, " mm");
+  SizeField* angle = dlg.size(tr("Total angle:"), old ? old->angle : 360, exprOf(old, "angle"), 1, 360, QString::fromUtf8(" °"));
   auto sync = [&] { // a row needs spacing, a circle an angle
     spacing->setEnabled(kind->currentIndex() == 0);
     angle->setEnabled(kind->currentIndex() == 1);
@@ -634,11 +784,239 @@ void MainWindow::pattern(int editIndex) {
   f->source = sources[source->currentIndex()];
   f->kind = kind->currentIndex() == 0 ? PatternFeature::Kind::Linear : PatternFeature::Kind::Circular;
   f->axis = PatternFeature::Axis(axis->currentIndex());
-  f->count = count->value();
-  f->spacing = spacing->value();
-  f->angle = angle->value();
+  f->count = int(count->value());
+  setExpr(*f, "count", count);
+  if (f->kind == PatternFeature::Kind::Linear) {
+    f->spacing = spacing->value();
+    setExpr(*f, "spacing", spacing);
+    f->angle = old ? old->angle : 360;
+  } else {
+    f->angle = angle->value();
+    setExpr(*f, "angle", angle);
+    f->spacing = old ? old->spacing : 20;
+  }
   if (old) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
+}
+
+void MainWindow::hole(int editIndex) {
+  const auto* old = editIndex >= 0 ? m_doc.as<HoleFeature>(editIndex) : nullptr;
+  const int sketch = old ? old->sketch : chosenSketch();
+  if (!old && (sketch < 0 || m_doc.body().IsNull())) {
+    hint(tr("Hole: sketch on a face of the part and draw a circle where each hole goes, then click Hole."));
+    return;
+  }
+  // ISO metric screws: clearance hole (normal fit), counterbore for socket head
+  // cap screws, 90° countersink for flat head screws.
+  struct Size {
+    const char* name;
+    double hole, bore, boreDepth, sink;
+  };
+  static constexpr Size sizes[] = {{"M2", 2.4, 4.4, 2.3, 4.4},     {"M2.5", 2.9, 5.5, 2.8, 5.5},
+                                   {"M3", 3.4, 6.5, 3.3, 6.3},     {"M4", 4.5, 8, 4.4, 9.4},
+                                   {"M5", 5.5, 10, 5.4, 10.4},     {"M6", 6.6, 11, 6.5, 12.6},
+                                   {"M8", 9, 15, 8.6, 17.3},       {"M10", 11, 18, 10.8, 20},
+                                   {"M12", 13.5, 20, 13, 24}};
+  QStringList sizeNames{tr("Custom")};
+  for (const Size& s : sizes) sizeNames << tr("%1 screw").arg(s.name);
+
+  const HoleFeature defaults;
+  const HoleFeature& h = old ? *old : defaults;
+  FormDialog dlg(this, tr("Hole"), m_doc.values());
+  QComboBox* kind = dlg.choice(tr("Type:"), {tr("Simple"), tr("Counterbore (socket head)"), tr("Countersink (flat head)")},
+                               int(h.kind));
+  QComboBox* standard = dlg.choice(tr("Size:"), sizeNames, old ? 0 : 3);
+  SizeField* diameter = dlg.size(tr("Diameter:"), h.diameter, exprOf(old, "diameter"), 0.01, 1e5, " mm");
+  SizeField* depth = dlg.size(tr("Depth (0 = through all):"), h.depth, exprOf(old, "depth"), 0, 1e5, " mm");
+  SizeField* bore = dlg.size(tr("Counterbore diameter:"), h.boreDiameter, exprOf(old, "bore-diameter"), 0.01, 1e5, " mm");
+  SizeField* boreDepth = dlg.size(tr("Counterbore depth:"), h.boreDepth, exprOf(old, "bore-depth"), 0.01, 1e5, " mm");
+  SizeField* sink = dlg.size(tr("Countersink diameter:"), h.sinkDiameter, exprOf(old, "sink-diameter"), 0.01, 1e5, " mm");
+  SizeField* sinkAngle = dlg.size(tr("Countersink angle:"), h.sinkAngle, exprOf(old, "sink-angle"), 1, 179, QString::fromUtf8(" °"));
+  QComboBox* direction = dlg.choice(tr("Direction:"), {tr("Into the face"), tr("Opposite")}, h.flip ? 1 : 0);
+  auto sync = [&] {
+    bore->setEnabled(kind->currentIndex() == 1);
+    boreDepth->setEnabled(kind->currentIndex() == 1);
+    sink->setEnabled(kind->currentIndex() == 2);
+    sinkAngle->setEnabled(kind->currentIndex() == 2);
+  };
+  connect(kind, &QComboBox::currentIndexChanged, &dlg, sync);
+  connect(standard, &QComboBox::currentIndexChanged, &dlg, [&](int i) {
+    if (i <= 0) return;
+    const Size& s = sizes[i - 1];
+    diameter->setValue(s.hole);
+    bore->setValue(s.bore);
+    boreDepth->setValue(s.boreDepth);
+    sink->setValue(s.sink);
+    sinkAngle->setValue(90);
+  });
+  if (!old) emit standard->currentIndexChanged(standard->currentIndex()); // fill in M3
+  sync();
+  if (!dlg.run()) return;
+
+  auto f = std::make_unique<HoleFeature>();
+  f->sketch = sketch;
+  f->kind = HoleFeature::Kind(kind->currentIndex());
+  f->flip = direction->currentIndex() == 1;
+  const std::pair<const char*, SizeField*> fields[] = {{"diameter", diameter}, {"depth", depth},
+                                                       {"bore-diameter", bore}, {"bore-depth", boreDepth},
+                                                       {"sink-diameter", sink}, {"sink-angle", sinkAngle}};
+  for (const auto& [name, field] : fields) {
+    f->setValue(name, field->value());
+    setExpr(*f, name, field);
+  }
+  if (old) replaceFeature(editIndex, std::move(f));
+  else addFeature(std::move(f));
+}
+
+void MainWindow::mirror(int editIndex) {
+  const auto* old = editIndex >= 0 ? m_doc.as<MirrorFeature>(editIndex) : nullptr;
+  if (!old && m_doc.body().IsNull()) {
+    hint(tr("Mirror: make a body first."));
+    return;
+  }
+  const std::vector<int> faces = old ? std::vector<int>{} : selectedFaces();
+  QStringList planes{tr("YZ plane (left / right)"), tr("XZ plane (front / back)"), tr("XY plane (top / bottom)")};
+  const MirrorFeature::Plane order[] = {MirrorFeature::Plane::YZ, MirrorFeature::Plane::XZ, MirrorFeature::Plane::XY,
+                                        MirrorFeature::Plane::Face};
+  const bool canFace = (old && old->plane == MirrorFeature::Plane::Face) || faces.size() == 1;
+  if (canFace) planes << tr("The selected face");
+  int current = 0;
+  if (old) current = int(std::find(std::begin(order), std::end(order), old->plane) - std::begin(order));
+  else if (canFace) current = 3;
+
+  FormDialog dlg(this, tr("Mirror"), m_doc.values());
+  dlg.text({}, tr("Mirrors the whole part and joins the copy.\nTo mirror across a face of the part, click it first."));
+  QComboBox* plane = dlg.choice(tr("Mirror across:"), planes, current);
+  if (!dlg.run()) return;
+
+  auto f = std::make_unique<MirrorFeature>();
+  f->plane = order[plane->currentIndex()];
+  if (f->plane == MirrorFeature::Plane::Face) {
+    f->face = old ? old->face : faces[0];
+    f->key = old ? old->key : keysOf(faces, TopAbs_FACE)[0];
+  }
+  if (old) replaceFeature(editIndex, std::move(f));
+  else addFeature(std::move(f));
+}
+
+// Name / formula table; the values are computed as you type.
+void MainWindow::editParameters() {
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Parameters"));
+  dlg.resize(560, 420);
+  auto* layout = new QVBoxLayout(&dlg);
+  auto* intro = new QLabel(tr("Name sizes once and use them anywhere a size is asked for: <i>width / 2 + 5</i>.<br>"
+                              "Changing a value here rebuilds every step that uses it."),
+                           &dlg);
+  intro->setWordWrap(true);
+  layout->addWidget(intro);
+  auto* table = new QTableWidget(0, 3, &dlg);
+  table->setHorizontalHeaderLabels({tr("Name"), tr("Value or formula"), tr("Result")});
+  table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  table->verticalHeader()->hide();
+  layout->addWidget(table);
+  auto* status = new QLabel(&dlg);
+  status->setWordWrap(true);
+  layout->addWidget(status);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  QPushButton* addButton = buttons->addButton(tr("Add"), QDialogButtonBox::ActionRole);
+  QPushButton* removeButton = buttons->addButton(tr("Remove"), QDialogButtonBox::ActionRole);
+  layout->addWidget(buttons);
+
+  auto read = [table] {
+    std::vector<Parameter> params;
+    for (int r = 0; r < table->rowCount(); ++r) {
+      const QString name = table->item(r, 0) ? table->item(r, 0)->text().trimmed() : QString();
+      const QString expr = table->item(r, 1) ? table->item(r, 1)->text().trimmed() : QString();
+      if (!name.isEmpty() || !expr.isEmpty()) params.push_back({name.toStdString(), expr.toStdString()});
+    }
+    return params;
+  };
+  bool filling = false;
+  auto refresh = [&] { // results column and the error line
+    filling = true;
+    std::string error;
+    Variables values;
+    const std::vector<Parameter> params = read();
+    try {
+      values = model::evaluateParameters(params);
+    } catch (const std::exception& e) {
+      error = e.what();
+      for (size_t pass = 0; pass < params.size(); ++pass) // still show the ones that work
+        for (const Parameter& p : params)
+          if (!values.count(p.name)) {
+            try {
+              values[p.name] = model::evaluate(p.expression, values);
+            } catch (const std::exception&) {
+              // stays "?"
+            }
+          }
+    }
+    for (int r = 0; r < table->rowCount(); ++r) {
+      const QString name = table->item(r, 0) ? table->item(r, 0)->text().trimmed() : QString();
+      const auto it = values.find(name.toStdString());
+      auto* result = new QTableWidgetItem(it == values.end() ? QString("?") : num(it->second));
+      result->setFlags(Qt::ItemIsEnabled);
+      table->setItem(r, 2, result);
+    }
+    status->setText(error.empty() ? QString() : QString::fromStdString(error));
+    status->setStyleSheet("color: #c8281e");
+    filling = false;
+  };
+  auto addRow = [&](const QString& name, const QString& expr) {
+    const int r = table->rowCount();
+    table->insertRow(r);
+    table->setItem(r, 0, new QTableWidgetItem(name));
+    table->setItem(r, 1, new QTableWidgetItem(expr));
+  };
+  for (const Parameter& p : m_doc.parameters())
+    addRow(QString::fromStdString(p.name), QString::fromStdString(p.expression));
+  refresh();
+  connect(table, &QTableWidget::itemChanged, &dlg, [&] {
+    if (!filling) refresh();
+  });
+  connect(addButton, &QPushButton::clicked, &dlg, [&] {
+    int n = int(table->rowCount()) + 1; // a free default name
+    auto taken = [&](const QString& name) {
+      for (int r = 0; r < table->rowCount(); ++r)
+        if (table->item(r, 0) && table->item(r, 0)->text() == name) return true;
+      return false;
+    };
+    while (taken(QString("p%1").arg(n))) ++n;
+    filling = true;
+    addRow(QString("p%1").arg(n), "10");
+    filling = false;
+    refresh();
+    table->setCurrentCell(table->rowCount() - 1, 0);
+    table->editItem(table->item(table->rowCount() - 1, 0));
+  });
+  connect(removeButton, &QPushButton::clicked, &dlg, [&] {
+    if (table->currentRow() >= 0) table->removeRow(table->currentRow());
+    refresh();
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, [&] {
+    try {
+      model::evaluateParameters(read());
+    } catch (const std::exception& e) {
+      QMessageBox::warning(&dlg, tr("Parameters"), QString::fromStdString(e.what()));
+      return;
+    }
+    dlg.accept();
+  });
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  std::vector<Parameter> params = read();
+  const auto& now = m_doc.parameters();
+  if (params.size() == now.size() &&
+      std::equal(params.begin(), params.end(), now.begin(),
+                 [](const Parameter& a, const Parameter& b) { return a.name == b.name && a.expression == b.expression; }))
+    return;
+  pushUndo();
+  m_doc.setParameters(std::move(params));
+  documentChanged();
+  if (m_doc.hasErrors()) hint(tr("Some steps no longer work with these parameters, see the red marks in the timeline."));
+  else hint(tr("Parameters updated."));
 }
 
 void MainWindow::measure() {
@@ -689,6 +1067,7 @@ void MainWindow::editFeature(int index) {
     m_editingSketch = index;
     m_viewer->context()->ClearSelected(false);
     clearDimensions();
+    m_editor->setVariables(m_doc.values());
     m_editor->begin(s->plane, s->sketch);
     updateActions();
   } else if (m_doc.as<ExtrudeFeature>(index)) {
@@ -703,6 +1082,10 @@ void MainWindow::editFeature(int index) {
     shell(index);
   } else if (m_doc.as<PatternFeature>(index)) {
     pattern(index);
+  } else if (m_doc.as<HoleFeature>(index)) {
+    hole(index);
+  } else if (m_doc.as<MirrorFeature>(index)) {
+    mirror(index);
   } else {
     hint(tr("This step has no settings to change."));
   }
@@ -808,6 +1191,7 @@ bool MainWindow::confirmDiscard() {
 
 void MainWindow::newProject() {
   if (!confirmDiscard()) return;
+  clearAutosave();
   m_doc = {};
   m_undo.clear();
   m_redo.clear();
@@ -821,7 +1205,7 @@ void MainWindow::openProjectDialog() {
   if (!confirmDiscard()) return;
   const QString path = QFileDialog::getOpenFileName(this, tr("Open Project"), {},
                                                     tr("Projects (*.%1)").arg(project::kExtension));
-  if (!path.isEmpty()) openProject(path);
+  if (!path.isEmpty() && openProject(path)) addRecent(path);
 }
 
 bool MainWindow::openProject(const QString& path) {
@@ -833,6 +1217,7 @@ bool MainWindow::openProject(const QString& path) {
   }
   m_undo.clear();
   m_redo.clear();
+  clearAutosave();
   setProjectPath(path);
   refreshScene();
   refreshTimeline();
@@ -851,6 +1236,7 @@ bool MainWindow::save() {
     return false;
   }
   setWindowModified(false);
+  clearAutosave();
   hint(tr("Saved %1").arg(QFileInfo(m_path).fileName()));
   return true;
 }
@@ -867,6 +1253,7 @@ bool MainWindow::saveAs() {
     return false;
   }
   setProjectPath(path);
+  addRecent(path);
   return true;
 }
 
@@ -890,16 +1277,28 @@ void MainWindow::exportFile() {
     hint(tr("Export: there is no body yet."));
     return;
   }
-  const QStringList filters = {tr("STEP (*.step *.stp)"), tr("IGES (*.iges *.igs)"), tr("STL mesh (*.stl)"),
-                               tr("OBJ mesh (*.obj)"), tr("OpenCASCADE BREP (*.brep)")};
-  const char* defaultExt[] = {"step", "iges", "stl", "obj", "brep"};
+  const QStringList filters = {tr("STEP (*.step *.stp)"),     tr("IGES (*.iges *.igs)"),
+                               tr("STL mesh (*.stl)"),         tr("OBJ mesh (*.obj)"),
+                               tr("3MF for 3D printing (*.3mf)"), tr("OpenCASCADE BREP (*.brep)")};
+  const char* defaultExt[] = {"step", "iges", "stl", "obj", "3mf", "brep"};
   const QString base = m_path.isEmpty() ? tr("part") : QFileInfo(m_path).completeBaseName();
   QString filter = filters[0];
   QString path = QFileDialog::getSaveFileName(this, tr("Export"), base + ".step", filters.join(";;"), &filter);
   if (path.isEmpty()) return;
   if (QFileInfo(path).suffix().isEmpty()) path += QString(".") + defaultExt[std::max<qsizetype>(0, filters.indexOf(filter))];
   try {
-    io::exportShape(m_doc.body(), path.toStdString());
+    io::MeshQuality quality = io::MeshQuality::Normal;
+    if (io::isMesh(io::formatOf(path.toStdString()))) { // meshes: how smooth should curves be?
+      QSettings settings;
+      FormDialog dlg(this, tr("Mesh Quality"));
+      dlg.text({}, tr("Curved faces are cut into flat triangles.\nFiner looks smoother but makes bigger files."));
+      QComboBox* q = dlg.choice(tr("Quality:"), {tr("Coarse (small file)"), tr("Normal"), tr("Fine (smooth curves)")},
+                                std::clamp(settings.value("meshQuality", 1).toInt(), 0, 2));
+      if (!dlg.run()) return;
+      settings.setValue("meshQuality", q->currentIndex());
+      quality = io::MeshQuality(q->currentIndex());
+    }
+    io::exportShape(m_doc.body(), path.toStdString(), quality);
   } catch (const std::exception& e) {
     QMessageBox::warning(this, tr("Export"), QString::fromStdString(e.what()));
     return;
@@ -914,10 +1313,86 @@ void MainWindow::setProjectPath(const QString& path) {
   setWindowModified(false);
 }
 
+void MainWindow::addRecent(const QString& path) {
+  QSettings settings;
+  QStringList recent = settings.value("recentFiles").toStringList();
+  const QString full = QFileInfo(path).absoluteFilePath();
+  recent.removeAll(full);
+  recent.prepend(full);
+  while (recent.size() > 10) recent.removeLast();
+  settings.setValue("recentFiles", recent);
+}
+
+void MainWindow::fillRecentMenu() {
+  m_recentMenu->clear();
+  const QStringList recent = QSettings().value("recentFiles").toStringList();
+  for (const QString& path : recent) {
+    const QFileInfo info(path);
+    QAction* a = m_recentMenu->addAction(
+        QString("%1   (%2)").arg(info.fileName(), QDir::toNativeSeparators(info.absolutePath())));
+    a->setEnabled(info.exists());
+    connect(a, &QAction::triggered, this, [this, path] {
+      if (confirmDiscard() && openProject(path)) addRecent(path);
+    });
+  }
+  if (recent.isEmpty()) {
+    m_recentMenu->addAction(tr("No recent projects"))->setEnabled(false);
+    return;
+  }
+  m_recentMenu->addSeparator();
+  m_recentMenu->addAction(tr("Clear List"), this, [] { QSettings().remove("recentFiles"); });
+}
+
+void MainWindow::autosave() {
+  if (!isWindowModified() || m_doc.size() == 0) return;
+  try {
+    project::save(m_doc, m_autosavePath);
+    QSettings().setValue("autosave/" + QFileInfo(m_autosavePath).completeBaseName(), m_path);
+  } catch (const std::exception&) {
+    // A failed backup must not interrupt the work; the next minute tries again.
+  }
+}
+
+void MainWindow::clearAutosave() {
+  QFile::remove(m_autosavePath);
+  QSettings().remove("autosave/" + QFileInfo(m_autosavePath).completeBaseName());
+}
+
+void MainWindow::recoverAutosave() {
+  const QDir dir = QFileInfo(m_autosavePath).absoluteDir();
+  for (const QFileInfo& backup : dir.entryInfoList({QString("*.") + project::kExtension}, QDir::Files, QDir::Time)) {
+    if (backup.absoluteFilePath() == m_autosavePath) continue;
+    QLockFile lock(dir.filePath(backup.completeBaseName() + ".lock"));
+    if (!lock.tryLock(0)) continue; // another OpenCaliper window is still using it
+    const QString key = "autosave/" + backup.completeBaseName();
+    const QString original = QSettings().value(key).toString();
+    const QString name = original.isEmpty() ? tr("an untitled project") : QFileInfo(original).fileName();
+    const auto answer = QMessageBox::question(
+        this, tr("Recover Unsaved Work"),
+        tr("OpenCaliper was closed without saving %1.\nA backup from %2 was found. Recover it?")
+            .arg(name, QLocale().toString(backup.lastModified(), QLocale::ShortFormat)),
+        QMessageBox::Yes | QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+      if (!openProject(backup.absoluteFilePath())) return; // keep the backup when it cannot be read
+      setProjectPath(original);
+      setWindowModified(true);
+      autosave(); // now this window's backup
+      hint(tr("Recovered. Save the project to keep it."));
+    }
+    QFile::remove(backup.absoluteFilePath());
+    QSettings().remove(key);
+    if (answer == QMessageBox::Yes) return;
+  }
+}
+
 void MainWindow::closeEvent(QCloseEvent* e) {
   if (m_editor->isActive()) finishSketch();
-  if (confirmDiscard()) e->accept();
-  else e->ignore();
+  if (confirmDiscard()) {
+    clearAutosave();
+    e->accept();
+  } else {
+    e->ignore();
+  }
 }
 
 // --- display ------------------------------------------------------------------
@@ -982,12 +1457,12 @@ void MainWindow::editDimension() {
   QString label = tr("Length:");
   if (ref.kind == DimensionRef::Kind::ExtrudeDepth) label = tr("Depth:");
   else if (ref.kind == DimensionRef::Kind::SketchCurve) label = ref.diameter ? tr("Diameter:") : tr("Radius:");
-  FormDialog dlg(this, tr("Change Dimension"));
-  QDoubleSpinBox* value = dlg.number(label, ref.value, 0.001, 1e6, " mm");
+  FormDialog dlg(this, tr("Change Dimension"), m_doc.values());
+  SizeField* value = dlg.size(label, ref.value, ref.expr, 0.001, 1e6, " mm");
   if (!dlg.run()) return;
 
   std::string error;
-  std::unique_ptr<Feature> changed = applyDimension(m_doc, ref, value->value(), error);
+  std::unique_ptr<Feature> changed = applyDimension(m_doc, ref, value->value(), error, value->expression());
   if (!changed) {
     QMessageBox::warning(this, tr("Change Dimension"), QString::fromStdString(error));
     return;
@@ -1013,6 +1488,20 @@ QString MainWindow::describe(size_t i) const {
     return p->kind == PatternFeature::Kind::Linear
                ? tr("Pattern %1× along %2, %3 mm apart").arg(p->count).arg(axis, num(p->spacing))
                : tr("Pattern %1× around %2, %3°").arg(p->count).arg(axis, num(p->angle));
+  }
+  if (const auto* h = m_doc.as<HoleFeature>(i)) {
+    int holes = 0;
+    if (const auto* s = m_doc.as<SketchFeature>(size_t(h->sketch)))
+      for (const sketch::Entity& e : s->sketch.entities) holes += e.kind == sketch::EntityKind::Circle && !e.construction;
+    const QString kind = h->kind == HoleFeature::Kind::Counterbore ? tr("Counterbored hole")
+                         : h->kind == HoleFeature::Kind::Countersink ? tr("Countersunk hole")
+                                                                     : tr("Hole");
+    const QString depth = h->depth > 0 ? tr("%1 mm deep").arg(num(h->depth)) : tr("through");
+    return tr("%1 Ø%2 %3, %n hole(s)", "", holes).arg(kind, num(h->diameter), depth);
+  }
+  if (const auto* m = m_doc.as<MirrorFeature>(i)) {
+    const QString names[] = {"XY", "XZ", "YZ", tr("a face")};
+    return tr("Mirror across %1").arg(names[int(m->plane)]);
   }
   if (const auto* im = m_doc.as<ImportFeature>(i))
     return tr("Import %1").arg(QString::fromStdString(im->source));
@@ -1043,8 +1532,8 @@ void MainWindow::updateActions() {
   m_undoAction->setEnabled(sketching ? m_editor->canUndo() : !m_undo.empty());
   m_redoAction->setEnabled(sketching ? m_editor->canRedo() : !m_redo.empty());
   if (sketching)
-    hint(tr("Sketching: L line, R rectangle, C circle, A arc, G polygon, K slot, X construction, S select. "
-            "Esc stops, Delete removes, Ctrl+Z undoes. Ctrl+Enter finishes."));
+    hint(tr("Sketching: L line, R rectangle, C circle, A arc, G polygon, K slot, W trim, N fillet, O offset, "
+            "U mirror, X construction, S select. Esc stops, Delete removes, Ctrl+Z undoes. Ctrl+Enter finishes."));
   else if (m_doc.size() == 0)
     hint(tr("Start with a sketch: pick a plane in the Sketch toolbar."));
 }

@@ -1,6 +1,13 @@
 #include "sketch/SketchShape.h"
 
+#include <BOPAlgo_Tools.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <Standard_Failure.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Edge.hxx>
@@ -69,6 +76,55 @@ TopoDS_Compound makeShape(const Sketch& s, const gp_Ax3& plane,
   for (int p : points)
     builder.Add(result, BRepBuilderAPI_MakeVertex(toWorld(plane, s.x(p), s.y(p))).Vertex());
   return result;
+}
+
+std::vector<int> offsetLoops(Sketch& s, const std::vector<int>& entities, double distance) {
+  const gp_Ax3 plane; // sketch coordinates are the XY plane here
+  BRep_Builder builder;
+  TopoDS_Compound edges;
+  builder.MakeCompound(edges);
+  for (int e : entities)
+    if (const TopoDS_Shape edge = makeEntity(s, plane, e); !edge.IsNull()) builder.Add(edges, edge);
+
+  std::vector<int> added, newPoints;
+  auto point = [&](const gp_Pnt& p) { // reuse the ends shared by neighbouring pieces
+    for (int q : newPoints)
+      if (std::hypot(s.x(q) - p.X(), s.y(q) - p.Y()) < 1e-7) return q;
+    newPoints.push_back(s.addPoint(p.X(), p.Y()));
+    return newPoints.back();
+  };
+  try {
+    TopoDS_Shape wires;
+    if (BOPAlgo_Tools::EdgesToWires(edges, wires) != 0) return {};
+    for (TopExp_Explorer w(wires, TopAbs_WIRE); w.More(); w.Next()) {
+      BRepBuilderAPI_MakeFace face(TopoDS::Wire(w.Current()), true);
+      if (!face.IsDone()) return {};
+      BRepOffsetAPI_MakeOffset offset(face.Face(), GeomAbs_Intersection);
+      offset.Perform(distance);
+      if (!offset.IsDone()) return {};
+      for (TopExp_Explorer it(offset.Shape(), TopAbs_EDGE); it.More(); it.Next()) {
+        BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));
+        const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+        if (c.GetType() == GeomAbs_Line) {
+          if (a.Distance(b) > 1e-9) added.push_back(s.addLine(point(a), point(b)));
+        } else if (c.GetType() == GeomAbs_Circle) {
+          const gp_Circ circ = c.Circle();
+          const gp_Pnt centre = circ.Location();
+          if (c.LastParameter() - c.FirstParameter() > 2 * std::numbers::pi - 1e-9) {
+            added.push_back(s.addCircle(s.addPoint(centre.X(), centre.Y()), circ.Radius()));
+          } else { // counter-clockwise in the sketch when the circle's axis points up
+            const bool up = circ.Axis().Direction().Z() > 0;
+            added.push_back(s.addArc(s.addPoint(centre.X(), centre.Y()), point(up ? a : b), point(up ? b : a)));
+          }
+        } else {
+          return {};
+        }
+      }
+    }
+  } catch (const Standard_Failure&) {
+    return {};
+  }
+  return added;
 }
 
 } // namespace sketch

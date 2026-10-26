@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 // Pure 2D sketch: geometry, constraints and the constraint solver.
@@ -37,12 +38,15 @@ enum class ConstraintKind {
   Distance,      // points a, b at `value`
   Length,        // line a is `value` long
   Radius,        // circle/arc a has radius `value`
+  Symmetric,     // points a, b mirror images across line c
 };
 
 struct Constraint {
   ConstraintKind kind;
   int a = -1, b = -1;
   double value = 0;
+  std::string expr; // when set, `value` comes from this parameter expression
+  int c = -1;       // third reference (Symmetric: the mirror line)
 };
 
 enum class SolveResult { Ok, Failed };
@@ -60,6 +64,9 @@ public:
   int addArc(int center, int start, int end);
   int addConstraint(const Constraint& c);
   void removeEntity(int e); // also drops the constraints that use it
+  // Drops constraints on points that no curve uses any more (after trimming).
+  void dropDanglingConstraints();
+  std::vector<int> usedPoints() const;
 
   double x(int pt) const { return params[points[pt].x]; }
   double y(int pt) const { return params[points[pt].y]; }

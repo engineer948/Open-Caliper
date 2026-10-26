@@ -1,12 +1,15 @@
 #pragma once
 
+#include "model/Expression.h"
 #include "sketch/Sketch.h"
 
+#include <TopAbs_ShapeEnum.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_XYZ.hxx>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +33,12 @@ public:
   // deletes this one too.
   virtual int sketchInput() const { return -1; }
   virtual void setSketchInput(int) {}
+
+  // Sizes given as parameter expressions ("width / 2"), by field name; the
+  // document evaluates them into the fields before each build.
+  std::map<std::string, std::string> expressions;
+  // Sets the numeric field `field`; false if this feature has none by that name.
+  virtual bool setValue(const std::string& /*field*/, double /*value*/) { return false; }
 };
 
 // CRTP helper for clone().
@@ -37,6 +46,20 @@ template <class T> class FeatureOf : public Feature {
 public:
   std::unique_ptr<Feature> clone() const override { return std::make_unique<T>(static_cast<const T&>(*this)); }
 };
+
+// Where a picked edge or face was, so it can be found again after an earlier
+// step changed the body and the edge/face numbering with it.
+struct ShapeKey {
+  int type = -1;               // GeomAbs_CurveType or GeomAbs_SurfaceType; -1 = no key
+  gp_XYZ point;                // edge midpoint / face centre
+  gp_XYZ dir;                  // line direction, circle or cylinder axis, plane normal (zero if none)
+  double size = 0;             // circle/cylinder radius, else length/area
+  std::vector<gp_XYZ> normals; // edges: outward normals of the flat faces next to it
+  bool valid() const { return type >= 0; }
+};
+ShapeKey shapeKey(const TopoDS_Shape& body, const TopoDS_Shape& sub);
+// The edge or face of `body` that best matches `key`; null if nothing fits.
+TopoDS_Shape findShape(const TopoDS_Shape& body, const ShapeKey& key, TopAbs_ShapeEnum kind);
 
 class SketchFeature : public FeatureOf<SketchFeature> {
 public:
@@ -64,6 +87,7 @@ public:
   TopoDS_Shape tool(const Document& doc) const; // the extruded solid on its own
   int sketchInput() const override { return sketch; }
   void setSketchInput(int s) override { sketch = s; }
+  bool setValue(const std::string& f, double v) override { return f == "distance" && (distance = v, true); }
 };
 
 class RevolveFeature : public FeatureOf<RevolveFeature> {
@@ -79,47 +103,88 @@ public:
   TopoDS_Shape tool(const Document& doc) const; // the revolved solid on its own
   int sketchInput() const override { return sketch; }
   void setSketchInput(int s) override { sketch = s; }
+  bool setValue(const std::string& f, double v) override { return f == "angle" && (angle = v, true); }
 };
 
-// Edges are stored by their index in the body's edge map (TopExp::MapShapes).
-// Simple, but an earlier change that alters the topology can move them;
-// the build then fails or rounds a different edge (no topological naming yet).
+// Edges are stored by their index in the body's edge map (TopExp::MapShapes)
+// and by a ShapeKey. The key finds the edge again when an earlier change
+// renumbers the edges; files from 0.3 and older only have the index.
 class FilletFeature : public FeatureOf<FilletFeature> {
 public:
   std::vector<int> edges;
+  std::vector<ShapeKey> keys; // one per edge, or empty
   double radius = 1;
 
   std::string name() const override { return "Fillet"; }
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  bool setValue(const std::string& f, double v) override { return f == "radius" && (radius = v, true); }
 };
 
 class ChamferFeature : public FeatureOf<ChamferFeature> {
 public:
   std::vector<int> edges;
+  std::vector<ShapeKey> keys;
   double distance = 1;
 
   std::string name() const override { return "Chamfer"; }
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  bool setValue(const std::string& f, double v) override { return f == "distance" && (distance = v, true); }
 };
 
 // Hollows the body out to a wall `thickness`, leaving the selected faces open
-// (face indices as with fillets: by position in the body's face map).
+// (faces stored like fillet edges: index plus key).
 class ShellFeature : public FeatureOf<ShellFeature> {
 public:
   std::vector<int> faces;
+  std::vector<ShapeKey> keys;
   double thickness = 2;
 
   std::string name() const override { return "Shell"; }
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  bool setValue(const std::string& f, double v) override { return f == "thickness" && (thickness = v, true); }
 };
 
-// Repeats an extrude or revolve: `count` copies in total (the original
+// Drilled holes at the centre of every circle of a sketch, into the body
+// (against the sketch normal, or along it when flipped). Simple, counterbored
+// for socket head screws, or countersunk for flat head screws.
+class HoleFeature : public FeatureOf<HoleFeature> {
+public:
+  enum class Kind { Simple, Counterbore, Countersink };
+  int sketch = -1;
+  Kind kind = Kind::Simple;
+  double diameter = 3.4;
+  double depth = 0; // 0 = through all
+  double boreDiameter = 6.5, boreDepth = 3.3; // counterbore
+  double sinkDiameter = 6.3, sinkAngle = 90;  // countersink
+  bool flip = false;
+
+  std::string name() const override { return "Hole"; }
+  TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  TopoDS_Shape tool(const Document& doc, const TopoDS_Shape& body) const; // the drill shape on its own
+  int sketchInput() const override { return sketch; }
+  void setSketchInput(int s) override { sketch = s; }
+  bool setValue(const std::string& f, double v) override;
+};
+
+// Mirrors the whole body across an origin plane or a flat face and joins the copy.
+class MirrorFeature : public FeatureOf<MirrorFeature> {
+public:
+  enum class Plane { XY, XZ, YZ, Face };
+  Plane plane = Plane::YZ;
+  int face = -1; // Plane::Face: face index and key, as with shells
+  ShapeKey key;
+
+  std::string name() const override { return "Mirror"; }
+  TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+};
+
+// Repeats an extrude, revolve or hole: `count` copies in total (the original
 // included), in a row along a world axis or around a world axis through the origin.
 class PatternFeature : public FeatureOf<PatternFeature> {
 public:
   enum class Kind { Linear, Circular };
   enum class Axis { X, Y, Z };
-  int source = -1; // history index of the extrude/revolve to repeat
+  int source = -1; // history index of the extrude/revolve/hole to repeat
   Kind kind = Kind::Linear;
   Axis axis = Axis::X;
   int count = 3;
@@ -130,6 +195,7 @@ public:
   TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
   int sketchInput() const override { return source; }
   void setSketchInput(int s) override { source = s; }
+  bool setValue(const std::string& f, double v) override;
 };
 
 // A shape from a STEP/IGES/BREP file, joined to the body.
@@ -188,7 +254,22 @@ public:
   bool hasErrors() const;
   bool isConsumed(size_t sketchIndex) const; // used by some later feature
 
+  // User parameters. Changing them rebuilds everything.
+  const std::vector<Parameter>& parameters() const { return m_parameters; }
+  void setParameters(std::vector<Parameter> params);
+  // Current values; empty with parameterError() set when they do not evaluate.
+  const Variables& values() const { return m_values; }
+  const std::string& parameterError() const { return m_parameterError; }
+  // Evaluates an expression with the current parameter values (throws).
+  double evaluate(const std::string& expression) const { return model::evaluate(expression, m_values); }
+
 private:
+  void applyExpressions(Feature& f) const; // throws
+  void evaluateParameters();
+
+  std::vector<Parameter> m_parameters;
+  Variables m_values;
+  std::string m_parameterError;
   std::vector<std::unique_ptr<Feature>> m_history;
   std::vector<TopoDS_Shape> m_bodies; // body after each feature (cache)
   std::vector<std::string> m_errors;  // empty when the feature built fine

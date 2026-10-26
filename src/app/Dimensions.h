@@ -19,6 +19,7 @@ struct DimensionRef {
   int index = -1;   // entity (SketchCurve) or constraint (SketchConstraint)
   bool diameter = false; // value is shown and edited as a diameter
   double value = 0;      // what the label shows
+  std::string expr;      // the parameter formula behind it, in the same units; empty if none
 };
 
 using DimensionList = std::vector<std::pair<Handle(PrsDim_Dimension), DimensionRef>>;
@@ -27,5 +28,6 @@ DimensionList buildDimensions(const model::Document& doc);
 
 // The feature that replaces ref.feature with `newValue` applied, or null and
 // `error` set (for example when the new size conflicts with other constraints).
+// `expr`, when not empty, is kept as the parameter formula for the value.
 std::unique_ptr<model::Feature> applyDimension(const model::Document& doc, const DimensionRef& ref,
-                                               double newValue, std::string& error);
+                                               double newValue, std::string& error, const std::string& expr = {});

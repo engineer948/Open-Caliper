@@ -1,33 +1,51 @@
-## OpenCaliper 0.3.0
+## OpenCaliper 0.4.0
 
 ### What's new
 
+**Parameters**
+- **Parameters** (Ctrl+P): give sizes a name once, such as `width = 50` or
+  `wall = 2`, and use them in any size field: `width / 2 + 5`. Change a
+  parameter and every step that uses it rebuilds. Formulas also work in
+  sketch dimensions and when you double-click a dimension on the part.
+  `+ - * / ^`, parentheses, `pi`, `sqrt`, `min`, `max`, `round`, `sin`,
+  `cos` and `tan` (degrees) are supported.
+
+**Steadier history**
+- Fillets, chamfers and shells now remember *which* edge or face you picked
+  by its shape and position, not only by its number. Making the part bigger
+  or adding a hole in an earlier step no longer moves a fillet to another
+  edge or breaks it.
+
 **Sketching**
-- **Rectangle**, **polygon** (any number of sides, always regular) and **slot**
-  tools. Shortcuts: R, G, K.
-- **Construction geometry** (X): turn curves into dashed helper lines and
-  circles that guide the sketch but never become part of the solid.
-- **Constraint labels**: H, V, //, 90°, =, T, the sizes you gave and F for
-  fixed points are shown next to the geometry.
-- **Undo and redo inside a sketch** with Ctrl+Z / Ctrl+Y.
+- **Trim** (W): click the piece of a curve to cut away, up to where it
+  crosses other curves.
+- **Fillet** (N): click a corner where two lines meet to round it.
+- **Offset** (O): parallel copy of curves; a closed shape grows or shrinks
+  with sharp corners.
+- **Mirror** (U): mirror curves across a line. The copy stays linked to the
+  original through the new **Symmetric** constraint (Y).
 
 **Modelling**
-- **Shell** (Shift+H): hollow the part out to a wall thickness, leaving the
-  faces you clicked open. Perfect for boxes and enclosures.
-- **Pattern** (Shift+P): repeat an extrude or revolve, such as a hole, in a
-  row along X, Y or Z, or around an axis.
+- **Hole** (Shift+D): draw circles on a face where the holes go, then pick
+  a screw size from M2 to M12. Simple, counterbored (socket head) or
+  countersunk (flat head), blind or through all. Holes can be patterned.
+- **Mirror** (Shift+U): mirror the whole part across the XY, XZ or YZ plane
+  or across a flat face, and join the copy.
 
-**Measuring**
-- **Measure** (M): click one or two points, edges or faces for lengths,
-  areas, diameters, distances and angles.
-- **Properties** (Shift+M): volume, surface area, size, centre of mass and
-  weight in PLA, PETG, ABS, nylon, aluminium, steel, brass or wood.
+**3D printing**
+- **3MF export**, the format slicers prefer: millimetres, watertight mesh.
+- **Mesh quality** (coarse, normal, fine) when exporting STL, OBJ or 3MF.
+
+**Comfort**
+- **Autosave**: unsaved work is backed up every minute. After a crash or
+  power cut, OpenCaliper offers to recover it on the next start.
+- **File > Open Recent**.
 
 **Fixes**
-- Lines joined to arcs at their ends now really stay tangent when the sketch
-  changes.
+- Measure showed broken numbers ("5,") on systems with a decimal comma.
 
-Projects from 0.1 and 0.2 open unchanged.
+Projects from 0.1 to 0.3 open unchanged. Projects saved by 0.4 need 0.4 or
+newer for parameters, holes and mirrors.
 
 ---
 
@@ -48,28 +66,33 @@ in the README.
 ### What you can do
 
 - **Sketch** on the XY, XZ and YZ planes or on any flat face of a part:
-  lines, circles and arcs, snapping to the grid and to existing points.
+  lines, rectangles, circles, arcs, polygons and slots, snapping to the grid
+  and to existing points. Trim, offset, mirror and round corners.
 - **Constrain** sketches: coincident, horizontal, vertical, parallel,
-  perpendicular, tangent, equal, fix, and dimensions (length, radius,
-  distance). Drag points and the sketch follows its constraints.
+  perpendicular, tangent, equal, symmetric, fix, and dimensions (length,
+  radius, distance). Drag points and the sketch follows its constraints.
+- **Parameters**: named sizes and formulas that drive the whole model.
 - **Build solids**: extrude and revolve, as a new body, joined, cut or
   intersected. Closed loops inside other loops become holes.
-- **Finish edges** with fillets (rounded) and chamfers (bevelled).
+- **Finish** with fillets, chamfers, shells, screw holes, patterns and
+  mirrors.
+- **Measure** distances, angles and areas; volume and weight of the part.
 - **Dimensions on the part**: hole diameters, arc radii, the sizes you gave in
   sketches and extrude depths are shown on the model. Double-click one, type a
   new value, and the part rebuilds. View > Show Dimensions turns them off.
 - **Change your mind**: every step is in the timeline; double-click it to
   change a value or edit its sketch, and everything after it updates. Undo and
   redo with Ctrl+Z / Ctrl+Y.
-- **Files**: save projects as `.ocal`; export STEP, IGES, STL, OBJ and BREP;
-  import STEP, IGES and BREP.
+- **Files**: save projects as `.ocal` (with autosave and crash recovery);
+  export STEP, IGES, STL, OBJ, 3MF and BREP; import STEP, IGES and BREP.
 - Clickable view cube, standard views (0/1/2/3), Help > Licenses.
 
 ### Known limitations
 
-- Fillets and chamfers remember edges by number. Changing an earlier step
-  that adds or removes edges can make them fail (marked red in the timeline)
-  or round a different edge.
+- Fillets, chamfers and shells find their edges and faces again by shape and
+  position. Big changes to an earlier step (for example turning a box into a
+  cylinder) can still make them fail; the step is then marked red in the
+  timeline.
 - The 3D view runs through X11 on Linux (XWayland on Wayland desktops).
 - x86-64 only; no macOS build yet. The Windows build is not code-signed, so
   SmartScreen may ask for confirmation.

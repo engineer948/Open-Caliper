@@ -1,5 +1,8 @@
 // Solver tests. Run: ctest --test-dir build  (or ./build/sketch_tests)
 #include "sketch/Sketch.h"
+#include "sketch/SketchOps.h"
+
+#include <numbers>
 
 #include <cmath>
 #include <cstdio>
@@ -144,7 +147,108 @@ static void slotIsTangentAtJoints() {
   CHECK(std::abs(dx * rx + dy * ry) / (std::hypot(dx, dy) * std::hypot(rx, ry)) < 1e-6);
 }
 
+static void symmetricAndMirror() {
+  Sketch s;
+  const int axis = s.addLine(s.addPoint(0, -10), s.addPoint(0, 10));
+  s.addConstraint({K::Vertical, axis});
+  s.points[s.entities[axis].p[0]].fixed = true;
+  const int a = s.addPoint(2, 0), b = s.addPoint(6, 1), c = s.addPoint(0, 5); // c is on the axis
+  const int l1 = s.addLine(a, b), l2 = s.addLine(b, c);
+  const int circle = s.addCircle(s.addPoint(4, -4), 1.5);
+  const int before = s.dof();
+  const std::vector<int> copies = mirror(s, {l1, l2, circle, axis}, axis);
+  CHECK(copies.size() == 3);
+  CHECK(s.dof() == before); // the copy follows the original: no new freedom
+  CHECK(s.entities[copies[1]].p[1] == c); // shared point on the axis
+  // Move the original: the mirror image follows.
+  s.points[a].fixed = true;
+  s.setPoint(a, 3, 2);
+  CHECK(s.solve() == SolveResult::Ok);
+  const int ma = s.entities[copies[0]].p[0];
+  CHECK(near(s.x(ma), -3) && near(s.y(ma), 2));
+  CHECK(near(s.radius(copies[2]), s.radius(circle)));
+}
+
+static int lineCount(const Sketch& s) {
+  int n = 0;
+  for (const Entity& e : s.entities) n += e.kind == EntityKind::Line;
+  return n;
+}
+
+static void trimming() {
+  // A plus sign: trimming the right arm of the horizontal line stops at the vertical one.
+  Sketch s;
+  const int h = s.addLine(s.addPoint(-10, 0), s.addPoint(10, 0));
+  const int v = s.addLine(s.addPoint(0, -10), s.addPoint(0, 10));
+  CHECK(trim(s, h, 6, 0));
+  CHECK(near(s.x(s.entities[h].p[1]), 0));
+  CHECK(s.solve() == SolveResult::Ok);
+  // Middle of a line cut twice: two pieces remain.
+  Sketch m;
+  const int long_ = m.addLine(m.addPoint(0, 0), m.addPoint(30, 0));
+  m.addConstraint({K::Horizontal, long_});
+  m.addLine(m.addPoint(10, -5), m.addPoint(10, 5));
+  m.addLine(m.addPoint(20, -5), m.addPoint(20, 5));
+  CHECK(trim(m, long_, 15, 0));
+  CHECK(lineCount(m) == 4);
+  CHECK(m.solve() == SolveResult::Ok);
+  // A circle crossed by a line becomes an arc; with nothing crossing it disappears.
+  Sketch c;
+  const int circle = c.addCircle(c.addPoint(0, 0), 5);
+  c.addLine(c.addPoint(-10, 0), c.addPoint(10, 0));
+  CHECK(trim(c, circle, 0, -5)); // remove the lower half
+  CHECK(c.entities[circle].kind == EntityKind::Arc);
+  const Entity& arc = c.entities[circle];
+  CHECK(c.y(arc.p[1]) > -1e-6 && near(std::abs(c.x(arc.p[1])), 5)); // starts on the line, upper half kept
+  CHECK(c.solve() == SolveResult::Ok);
+  Sketch lone;
+  lone.addCircle(lone.addPoint(0, 0), 5);
+  CHECK(trim(lone, 0, 5, 0) && lone.entities.empty());
+  (void)v;
+}
+
+static void cornerFillet() {
+  Sketch s;
+  const int p0 = s.addPoint(0, 0), p1 = s.addPoint(10, 0), p2 = s.addPoint(10, 10);
+  const int a = s.addLine(p0, p1), b = s.addLine(p1, p2);
+  s.addConstraint({K::Horizontal, a});
+  s.addConstraint({K::Vertical, b});
+  CHECK(filletCorner(s, p1, 3));
+  CHECK(s.entities.size() == 3 && s.entities[2].kind == EntityKind::Arc);
+  CHECK(s.solve() == SolveResult::Ok);
+  CHECK(near(s.x(s.entities[a].p[1]), 7) && near(s.y(s.entities[b].p[0]), 3));
+  CHECK(near(s.radius(2), 3));
+  const int c = s.entities[2].p[0];
+  CHECK(near(s.x(c), 7) && near(s.y(c), 3));
+  CHECK(!filletCorner(s, p0, 1)); // only one line ends there
+  Sketch big;
+  const int q = big.addPoint(5, 0);
+  big.addLine(big.addPoint(0, 0), q);
+  big.addLine(q, big.addPoint(5, 5));
+  CHECK(!filletCorner(big, q, 50)); // larger than the lines
+}
+
+static void offsets() {
+  Sketch s;
+  const int l = s.addLine(s.addPoint(0, 0), s.addPoint(10, 0));
+  const int o = offsetCurve(s, l, 2);
+  CHECK(near(s.y(s.entities[o].p[0]), 2)); // to the left of 0 -> 10
+  const int c = s.addCircle(s.addPoint(0, 0), 5);
+  CHECK(near(s.radius(offsetCurve(s, c, -1)), 4));
+  CHECK(offsetCurve(s, c, -6) < 0);
+  CHECK(s.solve() == SolveResult::Ok);
+  Sketch r;
+  const int a = r.addPoint(0, 0), b = r.addPoint(1, 0), cc = r.addPoint(1, 1), d = r.addPoint(0, 1);
+  const std::vector<int> loop{r.addLine(a, b), r.addLine(b, cc), r.addLine(cc, d), r.addLine(d, a)};
+  CHECK(formsClosedLoops(r, loop));
+  CHECK(!formsClosedLoops(r, {loop[0], loop[1]}));
+}
+
 int main() {
+  symmetricAndMirror();
+  trimming();
+  cornerFillet();
+  offsets();
   freeEntitiesDof();
   rectangle();
   tangentLine();

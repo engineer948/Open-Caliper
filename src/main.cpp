@@ -32,6 +32,7 @@ int main(int argc, char** argv) {
 
   QApplication app(argc, argv);
   QApplication::setApplicationName("OpenCaliper");
+  QApplication::setOrganizationName("open-workshop-tools"); // settings and crash backups live under this
   QApplication::setApplicationVersion(OPENCALIPER_VERSION);
   QApplication::setDesktopFileName("io.github.open_workshop_tools.OpenCaliper"); // taskbar icon on Wayland/X11
   QApplication::setStyle("Fusion"); // same look on every platform
@@ -40,8 +41,9 @@ int main(int argc, char** argv) {
 
   // --screenshot <file.png>: save the 3D view and quit (for testing).
   const QStringList args = app.arguments();
-  if (args.size() > 1 && !args[1].startsWith("--")) w.openProject(args[1]); // opencaliper file.ocal
   const qsizetype i = args.indexOf("--screenshot");
+  if (args.size() > 1 && !args[1].startsWith("--")) w.openProject(args[1]); // opencaliper file.ocal
+  else if (i < 0) QTimer::singleShot(0, &w, [&w] { w.recoverAutosave(); });
   if (i >= 0 && i + 1 < args.size()) {
     const QString path = args[i + 1];
     QTimer::singleShot(1500, &w, [&w, path] {

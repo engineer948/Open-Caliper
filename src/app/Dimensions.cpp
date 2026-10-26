@@ -35,6 +35,17 @@ Handle(Prs3d_DimensionAspect) makeAspect(double modelSize) {
   return a;
 }
 
+// Formulas are stored for the value the model uses (a radius, a signed
+// distance); labels show diameters and depths. These convert between the two.
+std::string wrap(const std::string& expr, const char* before, const char* after) {
+  return expr.empty() ? expr : before + expr + after;
+}
+std::string unwrap(const std::string& expr, const std::string& before, const std::string& after) {
+  if (expr.size() > before.size() + after.size() && expr.starts_with(before) && expr.ends_with(after))
+    return expr.substr(before.size(), expr.size() - before.size() - after.size());
+  return expr;
+}
+
 double modelSize(const Document& doc) {
   Bnd_Box box;
   if (!doc.body().IsNull()) BRepBndLib::Add(doc.body(), box);
@@ -73,17 +84,26 @@ DimensionList buildDimensions(const Document& doc) {
       const gp_Pln plane(at);
       auto world = [&](int pt) { return sketch::toWorld(at, s.x(pt), s.y(pt)); };
 
+      // Circles that only mark where a Hole feature drills have no size that matters.
+      bool marksHoles = false;
+      for (size_t k = f + 1; k < doc.size(); ++k)
+        if (const auto* h = doc.as<HoleFeature>(k); h && h->sketch == int(f)) marksHoles = true;
+
       // Every circle and arc: holes are what people want to resize most.
-      for (int e = 0; e < int(s.entities.size()); ++e) {
+      for (int e = 0; e < int(s.entities.size()) && !marksHoles; ++e) {
         const sketch::Entity& en = s.entities[e];
         if (en.kind == EntityKind::Line || en.construction) continue;
         const double r = s.radius(e);
         if (r < kMin) continue;
         const gp_Circ circ(gp_Ax2(world(en.p[0]), at.Direction(), at.XDirection()), r);
+        std::string expr; // the radius formula, if a parameter drives it
+        for (const sketch::Constraint& c : s.constraints)
+          if (c.kind == ConstraintKind::Radius && c.a == e) expr = c.expr;
         if (en.kind == EntityKind::Circle)
-          add(new PrsDim_DiameterDimension(circ, plane), {DimensionRef::Kind::SketchCurve, int(f), e, true, 2 * r}, 0);
+          add(new PrsDim_DiameterDimension(circ, plane),
+              {DimensionRef::Kind::SketchCurve, int(f), e, true, 2 * r, unwrap(expr, "(", ")/2")}, 0);
         else
-          add(new PrsDim_RadiusDimension(circ, world(en.p[1])), {DimensionRef::Kind::SketchCurve, int(f), e, false, r}, 0);
+          add(new PrsDim_RadiusDimension(circ, world(en.p[1])), {DimensionRef::Kind::SketchCurve, int(f), e, false, r, expr}, 0);
       }
       // Lengths and distances the user dimensioned in the sketch.
       for (int c = 0; c < int(s.constraints.size()); ++c) {
@@ -94,7 +114,7 @@ DimensionList buildDimensions(const Document& doc) {
         else continue;
         if (world(a).Distance(world(b)) < kMin) continue;
         add(new PrsDim_LengthDimension(world(a), world(b), plane),
-            {DimensionRef::Kind::SketchConstraint, int(f), c, false, con.value}, size * 0.06);
+            {DimensionRef::Kind::SketchConstraint, int(f), c, false, con.value, con.expr}, size * 0.06);
       }
     } else if (const auto* ex = doc.as<ExtrudeFeature>(f)) {
       // Depth, drawn along the sketch normal from the sketch's first point.
@@ -106,15 +126,17 @@ DimensionList buildDimensions(const Document& doc) {
       const gp_Pnt to = from.Translated(gp_Vec(sf->plane.Direction()) * ex->distance);
       // A plane that contains the extrude direction, so the label stands up.
       const gp_Pln side(gp_Ax3(from, sf->plane.YDirection(), sf->plane.XDirection()));
+      const auto it = ex->expressions.find("distance");
+      const std::string expr = it == ex->expressions.end() ? std::string() : unwrap(it->second, "-(", ")");
       add(new PrsDim_LengthDimension(from, to, side),
-          {DimensionRef::Kind::ExtrudeDepth, int(f), -1, false, std::abs(ex->distance)}, -size * 0.06);
+          {DimensionRef::Kind::ExtrudeDepth, int(f), -1, false, std::abs(ex->distance), expr}, -size * 0.06);
     }
   }
   return out;
 }
 
 std::unique_ptr<Feature> applyDimension(const Document& doc, const DimensionRef& ref, double newValue,
-                                        std::string& error) {
+                                        std::string& error, const std::string& expr) {
   if (newValue <= 0) {
     error = "The value must be positive.";
     return nullptr;
@@ -124,6 +146,8 @@ std::unique_ptr<Feature> applyDimension(const Document& doc, const DimensionRef&
     if (!ex) return nullptr;
     auto copy = std::make_unique<ExtrudeFeature>(*ex);
     copy->distance = ex->distance < 0 ? -newValue : newValue; // keep the direction
+    if (expr.empty()) copy->expressions.erase("distance");
+    else copy->expressions["distance"] = ex->distance < 0 ? wrap(expr, "-(", ")") : expr;
     return copy;
   }
 
@@ -133,12 +157,14 @@ std::unique_ptr<Feature> applyDimension(const Document& doc, const DimensionRef&
   sketch::Sketch& s = copy->sketch;
   if (ref.kind == DimensionRef::Kind::SketchCurve) {
     const double r = ref.diameter ? newValue / 2 : newValue;
+    const std::string rexpr = ref.diameter ? wrap(expr, "(", ")/2") : expr;
     bool found = false;
     for (sketch::Constraint& c : s.constraints)
-      if (c.kind == ConstraintKind::Radius && c.a == ref.index) c.value = r, found = true;
-    if (!found) s.addConstraint({ConstraintKind::Radius, ref.index, -1, r}); // now it is a driving size
+      if (c.kind == ConstraintKind::Radius && c.a == ref.index) c.value = r, c.expr = rexpr, found = true;
+    if (!found) s.addConstraint({ConstraintKind::Radius, ref.index, -1, r, rexpr}); // now it is a driving size
   } else {
     s.constraints[ref.index].value = newValue;
+    s.constraints[ref.index].expr = expr;
   }
   if (s.solve() == sketch::SolveResult::Failed) {
     error = "This size conflicts with the sketch's other constraints.";

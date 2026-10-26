@@ -3,6 +3,8 @@
 
 #include <BRepGProp.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <GProp_GProps.hxx>
 
 #include <QDir>
@@ -30,8 +32,65 @@ static double volume(const TopoDS_Shape& s) {
   return props.Mass();
 }
 
-int main() {
+// 0.4: parameters, holes, mirrors and fillets that find their edges by key.
+static void newFeatures() {
   Document doc;
+  doc.setParameters({{"t", "4"}, {"d", "t - 1"}});
+  auto sk = std::make_unique<SketchFeature>();
+  sk->plane = gp_Ax3(gp::Origin(), gp::DZ(), gp::DX());
+  sketch::Sketch& s = sk->sketch;
+  const int a = s.addPoint(0, 0), b = s.addPoint(20, 0), c = s.addPoint(20, 20), d = s.addPoint(0, 20);
+  s.addLine(a, b);
+  s.addLine(b, c);
+  s.addLine(c, d);
+  s.addLine(d, a);
+  doc.add(std::move(sk));
+  auto ex = std::make_unique<ExtrudeFeature>();
+  ex->sketch = 0;
+  ex->expressions["distance"] = "t * 2";
+  doc.add(std::move(ex));
+
+  auto top = std::make_unique<SketchFeature>();
+  top->plane = gp_Ax3(gp_Pnt(0, 0, 8), gp::DZ(), gp::DX());
+  top->sketch.addCircle(top->sketch.addPoint(10, 10), 1);
+  doc.add(std::move(top));
+  auto hole = std::make_unique<HoleFeature>();
+  hole->sketch = 2;
+  hole->kind = HoleFeature::Kind::Counterbore;
+  hole->expressions["diameter"] = "d";
+  doc.add(std::move(hole));
+
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(doc.body(), TopAbs_EDGE, edges);
+  auto fillet = std::make_unique<FilletFeature>();
+  fillet->edges = {1};
+  fillet->keys = {shapeKey(doc.body(), edges(1))};
+  fillet->radius = 0.5;
+  doc.add(std::move(fillet));
+  auto mirror = std::make_unique<MirrorFeature>();
+  mirror->plane = MirrorFeature::Plane::XZ;
+  doc.add(std::move(mirror));
+  CHECK(!doc.hasErrors());
+
+  const QString path = QDir::temp().filePath("roundtrip04.ocal");
+  project::save(doc, path);
+  const Document loaded = project::load(path);
+  CHECK(loaded.size() == doc.size());
+  CHECK(!loaded.hasErrors());
+  CHECK(std::abs(volume(loaded.body()) - volume(doc.body())) < 1e-6);
+  CHECK(loaded.parameters().size() == 2 && loaded.values().at("d") == 3);
+  const auto* lh = loaded.as<HoleFeature>(3);
+  CHECK(lh && lh->kind == HoleFeature::Kind::Counterbore && lh->diameter == 3 && lh->expressions.at("diameter") == "d");
+  const auto* lf = loaded.as<FilletFeature>(4);
+  CHECK(lf && lf->keys.size() == 1 && lf->keys[0].valid() && lf->keys[0].normals.size() == 2);
+  const auto* lm = loaded.as<MirrorFeature>(5);
+  CHECK(lm && lm->plane == MirrorFeature::Plane::XZ);
+}
+
+int main() {
+  newFeatures();
+  Document doc;
+  doc.setParameters({{"len", "10"}});
   auto sk = std::make_unique<SketchFeature>();
   sk->plane = gp_Ax3(gp::Origin(), gp::DZ(), gp::DX());
   sketch::Sketch& s = sk->sketch;
@@ -42,7 +101,7 @@ int main() {
   s.addLine(d, a);
   s.addConstraint({sketch::ConstraintKind::Horizontal, l0});
   s.entities[s.addCircle(s.addPoint(5, 5), 2)].construction = true;
-  s.addConstraint({sketch::ConstraintKind::Length, l0, -1, 10});
+  s.addConstraint({sketch::ConstraintKind::Length, l0, -1, 10, "len"});
   s.points[a].fixed = true;
   doc.add(std::move(sk));
 
@@ -80,6 +139,7 @@ int main() {
   CHECK(std::abs(volume(loaded.body()) - volume(doc.body())) < 1e-6);
   const auto* ls = loaded.as<SketchFeature>(0);
   CHECK(ls && ls->sketch.constraints.size() == 2 && ls->sketch.points[a].fixed);
+  CHECK(ls && ls->sketch.constraints[1].expr == "len");
   const auto* lr = loaded.as<RevolveFeature>(3);
   CHECK(lr && lr->axis == RevolveFeature::Axis::SketchX && lr->op == Operation::Cut);
   const auto* lp = loaded.as<PatternFeature>(4);

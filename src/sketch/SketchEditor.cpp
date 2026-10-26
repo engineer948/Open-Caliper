@@ -1,4 +1,5 @@
 #include "sketch/SketchEditor.h"
+#include "sketch/SketchOps.h"
 #include "sketch/SketchShape.h"
 
 #include <Aspect_Grid.hxx>
@@ -9,6 +10,7 @@
 #include <V3d_Viewer.hxx>
 
 #include <QInputDialog>
+#include <QMessageBox>
 #include <QKeyEvent>
 #include <QMouseEvent>
 
@@ -41,6 +43,11 @@ Handle(AIS_Shape) makeLayer(const Handle(AIS_InteractiveContext)& ctx, Quantity_
 constexpr size_t kMaxUndo = 200;
 
 QString num(double v) { return QString::number(v, 'g', 6); }
+
+// "12.5", or "width/2 (12.5)" for a size from a parameter expression.
+QString sizeText(const Constraint& c) {
+  return c.expr.empty() ? num(c.value) : QString("%1 (%2)").arg(QString::fromStdString(c.expr), num(c.value));
+}
 
 double segmentDistance(double px, double py, double ax, double ay, double bx, double by) {
   const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
@@ -107,6 +114,7 @@ Sketch SketchEditor::finish() {
 void SketchEditor::setTool(Tool tool) {
   cancelOperation();
   m_tool = tool;
+  m_hoverEntity = -1;
   if (tool == Tool::Select) m_viewer->unsetCursor();
   else m_viewer->setCursor(Qt::CrossCursor);
   emit toolChanged(tool);
@@ -146,16 +154,7 @@ int SketchEditor::resolve(const Pick& p) {
   return p.point >= 0 ? p.point : m_sketch.addPoint(p.u, p.v);
 }
 
-std::vector<int> SketchEditor::usedPoints() const {
-  std::vector<bool> used(m_sketch.points.size(), false);
-  for (const Entity& e : m_sketch.entities)
-    for (int p : e.p)
-      if (p >= 0) used[p] = true;
-  std::vector<int> result;
-  for (int i = 0; i < int(used.size()); ++i)
-    if (used[i]) result.push_back(i);
-  return result;
-}
+std::vector<int> SketchEditor::usedPoints() const { return m_sketch.usedPoints(); }
 
 SketchEditor::Item SketchEditor::hitTest(double u, double v) const {
   const double tol = m_viewer->pixelsToWorld(kSnapPixels);
@@ -267,6 +266,8 @@ void SketchEditor::toolClick(const Pick& pick) {
     break;
   }
   case Tool::Select:
+  case Tool::Trim: // handled in mousePress
+  case Tool::Fillet:
     m_picks.clear();
     return;
   }
@@ -339,6 +340,41 @@ void SketchEditor::forget() {
   emit historyChanged();
 }
 
+bool SketchEditor::applyEdit(const std::function<bool()>& edit, const QString& failure) {
+  remember();
+  if (!edit() || m_sketch.solve() == SolveResult::Failed) {
+    m_sketch = m_undo.back();
+    forget();
+    emit message(failure);
+    redraw();
+    return false;
+  }
+  m_selection.clear();
+  reportState();
+  redraw();
+  return true;
+}
+
+bool SketchEditor::askValue(const QString& title, const QString& label, double& value, std::string& expr, bool positive) {
+  QString text = expr.empty() ? num(value) : QString::fromStdString(expr);
+  for (;;) {
+    bool ok = false;
+    text = QInputDialog::getText(m_viewer, title, label + "\n" + tr("A number or a formula with parameters, e.g. width / 2"),
+                                 QLineEdit::Normal, text, &ok);
+    if (!ok) return false;
+    const std::string t = text.trimmed().toStdString();
+    try {
+      const double v = model::evaluate(t, m_vars);
+      if (positive && v <= 0) throw std::runtime_error(tr("The value must be positive.").toStdString());
+      value = v;
+      expr = model::isPlainNumber(t) ? std::string() : t;
+      return true;
+    } catch (const std::exception& e) {
+      QMessageBox::warning(m_viewer, title, QString::fromStdString(e.what()));
+    }
+  }
+}
+
 void SketchEditor::undo() {
   if (m_undo.empty()) return;
   m_redo.push_back(std::move(m_sketch));
@@ -409,6 +445,9 @@ void SketchEditor::constrain(ConstraintKind kind) {
   case K::Tangent:
     if (s.only(0, 1, 1)) cs = {{kind, s.lines[0], s.circles[0]}};
     break;
+  case K::Symmetric:
+    if (s.only(2, 1, 0)) cs = {{kind, s.points[0], s.points[1], 0, {}, s.lines[0]}};
+    break;
   default:
     break;
   }
@@ -433,12 +472,7 @@ void SketchEditor::dimension() {
     emit message(tr("Dimension: select a line, a circle/arc or two points."));
     return;
   }
-  bool ok = false;
-  const double value = QInputDialog::getDouble(m_viewer, tr("Dimension"),
-                                               c.kind == K::Radius ? tr("Radius:") : tr("Length:"),
-                                               c.value, 1e-6, 1e9, 3, &ok);
-  if (!ok) return;
-  c.value = value;
+  if (!askValue(tr("Dimension"), c.kind == K::Radius ? tr("Radius:") : tr("Length:"), c.value, c.expr)) return;
   if (tryConstraints({c})) m_selection.clear();
   redraw();
 }
@@ -477,6 +511,41 @@ void SketchEditor::toggleConstruction() {
   redraw();
 }
 
+void SketchEditor::offsetSelection() {
+  std::vector<int> ents;
+  for (const Item& it : m_selection)
+    if (!it.isPoint) ents.push_back(it.index);
+  if (ents.empty()) {
+    emit message(tr("Offset: select curves first, e.g. a whole closed shape."));
+    return;
+  }
+  std::string expr;
+  if (!askValue(tr("Offset"), tr("Distance (negative: inwards):"), m_offsetDistance, expr, false)) return;
+  const double d = m_offsetDistance;
+  applyEdit(
+      [&] {
+        if (formsClosedLoops(m_sketch, ents)) return !offsetLoops(m_sketch, ents, d).empty();
+        for (int e : ents)
+          if (offsetCurve(m_sketch, e, d) < 0) return false;
+        return true;
+      },
+      tr("Offset: the curves cannot be offset by that much."));
+}
+
+void SketchEditor::mirrorSelection() {
+  int axis = -1; // the last selected line
+  for (auto it = m_selection.rbegin(); it != m_selection.rend() && axis < 0; ++it)
+    if (!it->isPoint && !m_sketch.isCircular(it->index)) axis = it->index;
+  std::vector<int> ents;
+  for (const Item& it : m_selection)
+    if (!it.isPoint && it.index != axis) ents.push_back(it.index);
+  if (axis < 0 || ents.empty()) {
+    emit message(tr("Mirror: select the curves, then the mirror line last (Shift+click)."));
+    return;
+  }
+  applyEdit([&] { return !mirror(m_sketch, ents, axis).empty(); }, tr("Mirror failed."));
+}
+
 void SketchEditor::deleteSelection() {
   std::vector<int> ents;
   for (const Item& it : m_selection)
@@ -499,6 +568,25 @@ bool SketchEditor::mousePress(QMouseEvent* e) {
     return true;
   }
   if (e->button() != Qt::LeftButton) return false;
+
+  if (m_tool == Tool::Trim || m_tool == Tool::Fillet) {
+    Pick p;
+    if (!pickAt(e->position(), false, p)) return true;
+    const Item hit = hitTest(p.u, p.v);
+    if (m_tool == Tool::Trim && hit.index >= 0 && !hit.isPoint) {
+      m_hoverEntity = -1;
+      applyEdit([&] { return trim(m_sketch, hit.index, p.u, p.v); }, tr("Trim failed."));
+    } else if (m_tool == Tool::Fillet && hit.isPoint) {
+      std::string expr;
+      if (askValue(tr("Fillet"), tr("Radius:"), m_filletRadius, expr))
+        applyEdit([&] { return filletCorner(m_sketch, hit.index, m_filletRadius); },
+                  tr("Fillet: click a corner where two lines meet, with a radius that fits."));
+    } else {
+      emit message(m_tool == Tool::Trim ? tr("Trim: click the piece of a curve to remove.")
+                                        : tr("Fillet: click a corner where two lines meet."));
+    }
+    return true;
+  }
 
   if (m_tool != Tool::Select) {
     Pick p;
@@ -541,7 +629,16 @@ bool SketchEditor::mouseMove(QMouseEvent* e) {
     redraw();
     return true;
   }
-  if (m_tool != Tool::Select) {
+  if (m_tool == Tool::Trim) {
+    Pick p;
+    int entity = -1;
+    if (pickAt(e->position(), false, p))
+      if (const Item hit = hitTest(p.u, p.v); !hit.isPoint) entity = hit.index;
+    if (entity != m_hoverEntity) {
+      m_hoverEntity = entity;
+      redrawPreview();
+    }
+  } else if (m_tool != Tool::Select) {
     m_hoverValid = pickAt(e->position(), true, m_hover);
     redrawPreview();
   }
@@ -621,8 +718,8 @@ void SketchEditor::redrawLabels() {
     case K::Perpendicular: onEntity[c.a] << QString::fromUtf8("90°"); onEntity[c.b] << QString::fromUtf8("90°"); break;
     case K::Equal: onEntity[c.a] << "="; onEntity[c.b] << "="; break;
     case K::Tangent: onEntity[c.a] << "T"; break;
-    case K::Length: onEntity[c.a] << num(c.value); break;
-    case K::Radius: onEntity[c.a] << "R" + num(c.value); break;
+    case K::Length: onEntity[c.a] << sizeText(c); break;
+    case K::Radius: onEntity[c.a] << "R" + sizeText(c); break;
     default: break;
     }
   }
@@ -660,7 +757,10 @@ void SketchEditor::redrawLabels() {
   }
   for (const Constraint& c : m_sketch.constraints) // point-to-point distances
     if (c.kind == K::Distance)
-      add(num(c.value), (m_sketch.x(c.a) + m_sketch.x(c.b)) / 2, (m_sketch.y(c.a) + m_sketch.y(c.b)) / 2 + off);
+      add(sizeText(c), (m_sketch.x(c.a) + m_sketch.x(c.b)) / 2, (m_sketch.y(c.a) + m_sketch.y(c.b)) / 2 + off);
+  for (const Constraint& c : m_sketch.constraints) // a mirror pair: a mark beside each point
+    if (c.kind == K::Symmetric)
+      for (int p : {c.a, c.b}) add(QString::fromUtf8("⇔"), m_sketch.x(p) - off * 0.6, m_sketch.y(p) + off * 0.6);
   for (int p : usedPoints())
     if (m_sketch.points[p].fixed) add("F", m_sketch.x(p) + off * 0.6, m_sketch.y(p) + off * 0.6);
 }
@@ -673,7 +773,9 @@ void SketchEditor::redrawPreview() {
     if (!s.IsNull()) b.Add(preview, s);
   };
 
-  if (m_hoverValid && m_tool != Tool::Select) {
+  if (m_tool == Tool::Trim && m_hoverEntity >= 0 && m_hoverEntity < int(m_sketch.entities.size()))
+    add(makeEntity(m_sketch, m_plane, m_hoverEntity));
+  if (m_hoverValid && m_tool != Tool::Select && m_tool != Tool::Trim && m_tool != Tool::Fillet) {
     const Pick& h = m_hover;
     const std::vector<Pick>& k = m_picks;
     Sketch marker; // the snap position as a dot

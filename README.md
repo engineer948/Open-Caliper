@@ -7,17 +7,21 @@ Every step stays editable in the timeline.
 
 ![OpenCaliper](docs/screenshot.png)
 
-- 2D sketches: lines, circles, arcs, with constraints (coincident, horizontal,
-  vertical, parallel, perpendicular, tangent, equal, fix) and dimensions
-- Rectangle, polygon and slot tools, construction (helper) geometry, constraint
-  labels on the sketch, undo inside sketches
-- Extrude, revolve, fillet, chamfer, shell, linear and circular patterns; join, cut, intersect
+- 2D sketches: lines, rectangles, circles, arcs, polygons, slots, with
+  constraints (coincident, horizontal, vertical, parallel, perpendicular,
+  tangent, equal, symmetric, fix) and dimensions
+- Trim, offset, mirror and corner fillets in sketches, construction (helper)
+  geometry, constraint labels, undo inside sketches
+- Parameters: name a size once (`width = 50`) and use formulas everywhere
+  (`width / 2 + 5`); change it and the whole part follows
+- Extrude, revolve, fillet, chamfer, shell, screw holes (M2 to M12, counterbored
+  or countersunk), linear and circular patterns, mirror; join, cut, intersect
 - Measure distances, angles, lengths and areas; volume, size and weight of the part
 - Sketch on the origin planes or on any flat face of the part
 - Dimensions on the model: hole diameters, sketch sizes and extrude depths;
   double-click one to change it and the part rebuilds
-- Editable history timeline, undo and redo
-- Export STEP, IGES, STL, OBJ, BREP; import STEP, IGES, BREP
+- Editable history timeline, undo and redo, autosave with crash recovery
+- Export STEP, IGES, STL, OBJ, 3MF; import STEP, IGES, BREP
 - Linux and Windows
 
 ## Download
@@ -93,6 +97,8 @@ publisher, choose "More info" → "Run anyway". The program is not code-signed.
 5. Click an edge of the part, then **Fillet** to round it.
 6. Double-click a dimension on the part (for example the hole's **Ø**) or any
    step in the **Timeline** to change it later.
+7. **Parameters** (Ctrl+P): add `width = 40`, then type `width` instead of a
+   number in any size. Change it once and the part follows.
 
 Mouse: left drag rotates, middle drag pans, the wheel zooms, **F** fits the
 view, **0/1/2/3** select iso/front/top/right. The cube in the corner is
@@ -103,11 +109,11 @@ clickable.
 | | Extensions |
 |---|---|
 | OpenCaliper project | `.ocal` (JSON, keeps the editable history) |
-| Export | `.step` `.stp`, `.iges` `.igs`, `.stl` (binary), `.obj`, `.brep` |
+| Export | `.step` `.stp`, `.iges` `.igs`, `.stl` (binary), `.obj`, `.3mf`, `.brep` |
 | Import | `.step` `.stp`, `.iges` `.igs`, `.brep` |
 
-Use STL or OBJ for 3D printing and STEP to exchange with other CAD programs.
-STL and OBJ are meshes, not solids, so they cannot be imported.
+Use 3MF (or STL) for 3D printing and STEP to exchange with other CAD programs.
+STL, OBJ and 3MF are meshes, not solids, so they cannot be imported.
 
 ## Building from source
 

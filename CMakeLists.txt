@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenCaliper VERSION 0.3.0 LANGUAGES CXX)
+project(OpenCaliper VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,7 +14,7 @@ if(WIN32)
 endif()
 
 # 2D sketch core (no Qt, no OCCT): shared by everything, tested on its own.
-add_library(sketchcore STATIC src/sketch/Sketch.cpp)
+add_library(sketchcore STATIC src/sketch/Sketch.cpp src/sketch/SketchOps.cpp)
 target_include_directories(sketchcore PUBLIC src)
 
 # Geometry and the parametric model (OCCT, no Qt).
@@ -22,6 +22,7 @@ target_include_directories(sketchcore PUBLIC src)
 # optional parts (e.g. TKIVtk needs VTK) that are not always installed.
 add_library(cadcore STATIC
   src/sketch/SketchShape.cpp
+  src/model/Expression.cpp
   src/model/Document.cpp
   src/io/Exchange.cpp
 )

@@ -277,15 +277,17 @@
         thickness to 15&nbsp;mm and everything after it rebuilds itself.
       </p>
       <div class="grid">
-        <div class="card"><h3>2D sketches</h3><p>Lines, rectangles, circles, arcs, polygons and slots on any plane or flat face, with dashed construction geometry and undo.</p></div>
-        <div class="card"><h3>Constraints and dimensions</h3><p>Coincident, horizontal, vertical, parallel, perpendicular, tangent, equal and fix, plus exact lengths, radii and distances. Drag a point and the sketch follows the rules.</p></div>
+        <div class="card"><h3>2D sketches</h3><p>Lines, rectangles, circles, arcs, polygons and slots on any plane or flat face. Trim, offset, mirror and round corners, with dashed construction geometry and undo.</p></div>
+        <div class="card"><h3>Constraints and dimensions</h3><p>Coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, symmetric and fix, plus exact lengths, radii and distances. Drag a point and the sketch follows the rules.</p></div>
+        <div class="card"><h3>Parameters and formulas</h3><p>Name a size once, <code>width = 50</code>, and type <code>width / 2 + 5</code> wherever a size is asked for. Change the parameter and the whole part follows.</p></div>
         <div class="card"><h3>Solids from sketches</h3><p>Extrude and revolve as a new body, or join, cut and intersect with what you already have. Loops inside loops become holes automatically.</p></div>
         <div class="card"><h3>Dimensions you can click</h3><p>Hole diameters, sketch sizes and extrude depths are shown on the part. Double-click one, type a new value, and the model rebuilds.</p></div>
-        <div class="card"><h3>Fillets and chamfers</h3><p>Click edges and round them or bevel them to the size you type in.</p></div>
-        <div class="card"><h3>Shell and patterns</h3><p>Hollow a part into a box with one click, and repeat holes or bosses in a row or around a circle.</p></div>
+        <div class="card"><h3>Fillets and chamfers</h3><p>Click edges and round them or bevel them to the size you type in. They keep finding their edges when earlier steps change the part.</p></div>
+        <div class="card"><h3>Screw holes</h3><p>Mark hole positions with circles and pick a size from M2 to M12: simple, counterbored for socket heads or countersunk for flat heads.</p></div>
+        <div class="card"><h3>Shell, patterns and mirror</h3><p>Hollow a part into a box with one click, repeat holes or bosses in a row or around a circle, and mirror a half into a whole part.</p></div>
         <div class="card"><h3>Measure and weigh</h3><p>Measure distances, angles and areas, and see volume, size and weight in PLA, PETG, aluminium, steel and more.</p></div>
-        <div class="card"><h3>Editable timeline</h3><p>Every step is listed. Double-click one to change it, edit an old sketch, delete a step, and the rest of the part rebuilds. Undo and redo included.</p></div>
-        <div class="card"><h3>Open file formats</h3><p>Save projects as readable <code>.ocal</code> files. Export STEP, IGES, STL, OBJ and BREP; import STEP, IGES and BREP.</p></div>
+        <div class="card"><h3>Editable timeline</h3><p>Every step is listed. Double-click one to change it, edit an old sketch, delete a step, and the rest of the part rebuilds. Undo, redo and autosave with crash recovery included.</p></div>
+        <div class="card"><h3>Open file formats</h3><p>Save projects as readable <code>.ocal</code> files. Export STEP, IGES, STL, OBJ, 3MF and BREP; import STEP, IGES and BREP.</p></div>
         <div class="card"><h3>Calm interface</h3><p>A clean 3D view with a clickable view cube, standard views on number keys, and drawing tools that only appear while you sketch.</p></div>
         <div class="card"><h3>Private by design</h3><p>No telemetry, no sign-in, no network access. What you design on your computer stays on your computer.</p></div>
       </div>
@@ -303,7 +305,7 @@
         <li>Click <strong>Finish</strong>, then <strong>Extrude</strong> and type a thickness. The circle becomes a hole.</li>
         <li>Click an edge of the part and choose <strong>Fillet</strong> to round it.</li>
         <li>Double-click the hole's <strong>&Oslash;</strong> label on the part, type a new diameter, and watch the hole change. The thickness label works the same way.</li>
-        <li><strong>File &rarr; Export</strong> as STL for your 3D printer or STEP for any other CAD program.</li>
+        <li><strong>File &rarr; Export</strong> as 3MF or STL for your 3D printer, or STEP for any other CAD program.</li>
       </ol>
     </div>
   </section>

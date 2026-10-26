@@ -16,6 +16,8 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <Standard_Failure.hxx>
@@ -23,6 +25,7 @@
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -40,7 +43,9 @@
 #include <gp_Trsf.hxx>
 
 #include <algorithm>
-#include <cstdio>
+#include <cmath>
+#include <charconv>
+#include <limits>
 #include <optional>
 #include <set>
 
@@ -77,18 +82,75 @@ TopoDS_Shape combine(const TopoDS_Shape& body, const TopoDS_Shape& tool, Operati
   return algo->Shape();
 }
 
-// Edge list of `body` by stored 1-based indices.
-std::vector<TopoDS_Edge> bodyEdges(const TopoDS_Shape& body, const std::vector<int>& indices) {
+// Sub-shapes of `body` stored as 1-based indices plus keys (see ShapeKey).
+// With keys the shapes are looked up by geometry, so renumbering does not matter.
+std::vector<TopoDS_Shape> bodyShapes(const TopoDS_Shape& body, const std::vector<int>& indices,
+                                     const std::vector<ShapeKey>& keys, TopAbs_ShapeEnum kind) {
+  const std::string what = kind == TopAbs_EDGE ? "edge" : "face";
   if (body.IsNull()) fail("There is no body yet.");
-  if (indices.empty()) fail("No edges selected.");
-  TopTools_IndexedMapOfShape map;
-  TopExp::MapShapes(body, TopAbs_EDGE, map);
-  std::vector<TopoDS_Edge> edges;
-  for (int i : indices) {
-    if (i < 1 || i > map.Extent()) fail("A selected edge no longer exists (an earlier step changed the shape).");
-    edges.push_back(TopoDS::Edge(map(i)));
+  if (indices.empty() && keys.empty()) fail("No " + what + "s selected.");
+  std::vector<TopoDS_Shape> shapes;
+  if (!keys.empty()) {
+    for (const ShapeKey& k : keys) {
+      const TopoDS_Shape s = findShape(body, k, kind);
+      if (s.IsNull()) fail("A selected " + what + " no longer exists (an earlier step changed the shape).");
+      if (std::find(shapes.begin(), shapes.end(), s) == shapes.end()) shapes.push_back(s);
+    }
+    return shapes;
   }
-  return edges;
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(body, kind, map);
+  for (int i : indices) {
+    if (i < 1 || i > map.Extent()) fail("A selected " + what + " no longer exists (an earlier step changed the shape).");
+    shapes.push_back(map(i));
+  }
+  return shapes;
+}
+
+std::optional<gp_Dir> outwardNormal(const TopoDS_Face& f) {
+  BRepAdaptor_Surface s(f);
+  if (s.GetType() != GeomAbs_Plane) return std::nullopt;
+  gp_Dir n = s.Plane().Axis().Direction();
+  if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
+  return n;
+}
+
+ShapeKey keyOf(const TopoDS_Shape& sub, const TopTools_IndexedDataMapOfShapeListOfShape* edgeFaces) {
+  ShapeKey k;
+  if (sub.IsNull()) return k;
+  if (sub.ShapeType() == TopAbs_EDGE) {
+    BRepAdaptor_Curve c(TopoDS::Edge(sub));
+    k.type = int(c.GetType());
+    k.point = c.Value((c.FirstParameter() + c.LastParameter()) / 2).XYZ();
+    GProp_GProps g;
+    BRepGProp::LinearProperties(sub, g);
+    k.size = g.Mass();
+    if (c.GetType() == GeomAbs_Line) k.dir = c.Line().Direction().XYZ();
+    else if (c.GetType() == GeomAbs_Circle) k.dir = c.Circle().Axis().Direction().XYZ(), k.size = c.Circle().Radius();
+    if (edgeFaces)
+      if (const int i = edgeFaces->FindIndex(sub); i > 0)
+        for (const TopoDS_Shape& f : edgeFaces->FindFromIndex(i))
+          if (const auto n = outwardNormal(TopoDS::Face(f)))
+            if (std::none_of(k.normals.begin(), k.normals.end(), [&](const gp_XYZ& m) { return m.IsEqual(n->XYZ(), 1e-9); }))
+              k.normals.push_back(n->XYZ());
+  } else if (sub.ShapeType() == TopAbs_FACE) {
+    const TopoDS_Face& f = TopoDS::Face(sub);
+    BRepAdaptor_Surface s(f);
+    k.type = int(s.GetType());
+    GProp_GProps g;
+    BRepGProp::SurfaceProperties(sub, g);
+    k.point = g.CentreOfMass().XYZ();
+    k.size = g.Mass();
+    if (const auto n = outwardNormal(f)) k.dir = n->XYZ();
+    else if (s.GetType() == GeomAbs_Cylinder) k.dir = s.Cylinder().Axis().Direction().XYZ(), k.size = s.Cylinder().Radius();
+  }
+  return k;
+}
+
+bool parallel(const gp_XYZ& a, const gp_XYZ& b, bool oriented) {
+  if (a.Modulus() < 1e-9 || b.Modulus() < 1e-9) return a.Modulus() < 1e-9 && b.Modulus() < 1e-9;
+  const double d = a.Normalized().Dot(b.Normalized());
+  return (oriented ? d : std::abs(d)) > 0.999;
 }
 
 } // namespace
@@ -103,6 +165,51 @@ int faceIndex(const TopoDS_Shape& body, const TopoDS_Shape& face) {
   TopTools_IndexedMapOfShape map;
   TopExp::MapShapes(body, TopAbs_FACE, map);
   return map.FindIndex(face);
+}
+
+ShapeKey shapeKey(const TopoDS_Shape& body, const TopoDS_Shape& sub) {
+  if (sub.IsNull()) return {};
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  if (sub.ShapeType() == TopAbs_EDGE && !body.IsNull())
+    TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  return keyOf(sub, &edgeFaces);
+}
+
+// Same kind of curve/surface with the same direction is required. Edges
+// also prefer the same neighbouring face normals (a box edge between the top
+// and the right side stays that edge when the box grows), then the nearest
+// position wins.
+TopoDS_Shape findShape(const TopoDS_Shape& body, const ShapeKey& key, TopAbs_ShapeEnum kind) {
+  if (body.IsNull() || !key.valid()) return {};
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(body, kind, map);
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  if (kind == TopAbs_EDGE) TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  std::vector<ShapeKey> keys;
+  for (int i = 1; i <= map.Extent(); ++i) keys.push_back(keyOf(map(i), &edgeFaces));
+
+  const bool orientedDir = kind == TopAbs_FACE && key.type == int(GeomAbs_Plane); // top vs bottom face
+  const bool hasRadius = key.type == (kind == TopAbs_EDGE ? int(GeomAbs_Circle) : int(GeomAbs_Cylinder));
+  for (const bool strict : {true, false}) {
+    double best = std::numeric_limits<double>::max();
+    int found = -1;
+    for (int i = 0; i < int(keys.size()); ++i) {
+      const ShapeKey& c = keys[i];
+      if (c.type != key.type || !parallel(c.dir, key.dir, orientedDir)) continue;
+      if (strict) {
+        if (c.normals.size() != key.normals.size()) continue;
+        const bool same = std::all_of(key.normals.begin(), key.normals.end(), [&](const gp_XYZ& n) {
+          return std::any_of(c.normals.begin(), c.normals.end(), [&](const gp_XYZ& m) { return n.Dot(m) > 0.999; });
+        });
+        if (!same) continue;
+      }
+      double score = (c.point - key.point).Modulus();
+      if (hasRadius) score += std::abs(c.size - key.size);
+      if (score < best) best = score, found = i;
+    }
+    if (found >= 0) return map(found + 1);
+  }
+  return {};
 }
 
 MassProperties massProperties(const TopoDS_Shape& shape) {
@@ -128,8 +235,8 @@ namespace {
 
 std::string mm(double v) {
   char buf[64];
-  std::snprintf(buf, sizeof buf, "%.3f", v);
-  std::string s = buf; // drop trailing zeros: 12.500 -> 12.5
+  const auto end = std::to_chars(buf, buf + sizeof buf, v, std::chars_format::fixed, 3).ptr; // '.' in any language
+  std::string s(buf, end); // drop trailing zeros: 12.500 -> 12.5
   while (s.back() == '0') s.pop_back();
   if (s.back() == '.') s.pop_back();
   return s;
@@ -268,14 +375,9 @@ TopoDS_Shape RevolveFeature::build(const Document& doc, const TopoDS_Shape& body
 TopoDS_Shape ShellFeature::build(const Document&, const TopoDS_Shape& body) const {
   if (thickness <= 0) fail("The wall thickness must be positive.");
   if (body.IsNull()) fail("There is no body yet.");
-  if (faces.empty()) fail("Select at least one face to open.");
-  TopTools_IndexedMapOfShape map;
-  TopExp::MapShapes(body, TopAbs_FACE, map);
+  if (faces.empty() && keys.empty()) fail("Select at least one face to open.");
   TopTools_ListOfShape open;
-  for (int i : faces) {
-    if (i < 1 || i > map.Extent()) fail("A selected face no longer exists (an earlier step changed the shape).");
-    open.Append(map(i));
-  }
+  for (const TopoDS_Shape& f : bodyShapes(body, faces, keys, TopAbs_FACE)) open.Append(f);
   BRepOffsetAPI_MakeThickSolid shell;
   shell.MakeThickSolidByJoin(body, open, -thickness, 1e-3); // negative: walls grow inwards
   shell.Build();
@@ -290,7 +392,8 @@ TopoDS_Shape PatternFeature::build(const Document& doc, const TopoDS_Shape& body
   Operation op = Operation::Join;
   if (const auto* e = doc.as<ExtrudeFeature>(size_t(source))) original = e->tool(doc), op = e->op;
   else if (const auto* r = doc.as<RevolveFeature>(size_t(source))) original = r->tool(doc), op = r->op;
-  else fail("A pattern repeats an extrude or a revolve.");
+  else if (const auto* h = doc.as<HoleFeature>(size_t(source))) original = h->tool(doc, body), op = Operation::Cut;
+  else fail("A pattern repeats an extrude, a revolve or a hole.");
 
   const gp_Dir dir = axis == Axis::X ? gp::DX() : axis == Axis::Y ? gp::DY() : gp::DZ();
   // A full circle has no copy on top of the original: 360/count; an arc ends on its last copy.
@@ -306,10 +409,102 @@ TopoDS_Shape PatternFeature::build(const Document& doc, const TopoDS_Shape& body
   return result;
 }
 
+bool PatternFeature::setValue(const std::string& f, double v) {
+  if (f == "count") count = int(std::lround(v));
+  else if (f == "spacing") spacing = v;
+  else if (f == "angle") angle = v;
+  else return false;
+  return true;
+}
+
+bool HoleFeature::setValue(const std::string& f, double v) {
+  if (f == "diameter") diameter = v;
+  else if (f == "depth") depth = v;
+  else if (f == "bore-diameter") boreDiameter = v;
+  else if (f == "bore-depth") boreDepth = v;
+  else if (f == "sink-diameter") sinkDiameter = v;
+  else if (f == "sink-angle") sinkAngle = v;
+  else return false;
+  return true;
+}
+
+TopoDS_Shape HoleFeature::tool(const Document& doc, const TopoDS_Shape& body) const {
+  const SketchFeature& s = inputSketch(doc, sketch);
+  if (diameter <= 0) fail("The hole diameter must be positive.");
+  if (depth < 0) fail("The hole depth must be positive (0 = through all).");
+  if (kind == Kind::Counterbore && (boreDiameter <= diameter || boreDepth <= 0))
+    fail("The counterbore must be wider than the hole and have a depth.");
+  if (kind == Kind::Countersink && (sinkDiameter <= diameter || sinkAngle <= 0 || sinkAngle >= 180))
+    fail("The countersink must be wider than the hole, with an angle between 0 and 180°.");
+
+  gp_Dir down = s.plane.Direction(); // into the material for a sketch on a face
+  if (!flip) down.Reverse();
+  double length = depth;
+  if (length == 0) { // through all: past the far side of the body from any hole
+    Bnd_Box box;
+    if (!body.IsNull()) BRepBndLib::Add(body, box);
+    if (box.IsVoid()) fail("There is no body to drill through yet.");
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    length = 2 * (std::sqrt(box.SquareExtent()) + s.plane.Location().Distance(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)));
+  }
+  constexpr double lift = 0.01; // start just above the face: no coplanar faces in the cut
+
+  BRep_Builder builder;
+  TopoDS_Compound holes;
+  builder.MakeCompound(holes);
+  bool any = false;
+  for (int e = 0; e < int(s.sketch.entities.size()); ++e) {
+    const sketch::Entity& en = s.sketch.entities[e];
+    if (en.kind != sketch::EntityKind::Circle || en.construction) continue;
+    const gp_Pnt top = sketch::toWorld(s.plane, s.sketch.x(en.p[0]), s.sketch.y(en.p[0])).Translated(gp_Vec(down) * -lift);
+    const gp_Ax2 ax(top, down);
+    TopoDS_Shape hole = BRepPrimAPI_MakeCylinder(ax, diameter / 2, length + lift).Shape();
+    if (kind == Kind::Counterbore)
+      hole = BRepAlgoAPI_Fuse(hole, BRepPrimAPI_MakeCylinder(ax, boreDiameter / 2, boreDepth + lift).Shape()).Shape();
+    if (kind == Kind::Countersink) {
+      const double slope = std::tan(sinkAngle / 2 * std::numbers::pi / 180); // radius change per depth
+      const double h = (sinkDiameter - diameter) / 2 / slope;
+      hole = BRepAlgoAPI_Fuse(hole, BRepPrimAPI_MakeCone(ax, sinkDiameter / 2 + lift * slope, diameter / 2, h + lift).Shape()).Shape();
+    }
+    builder.Add(holes, hole);
+    any = true;
+  }
+  if (!any) fail("Draw a circle in the sketch where each hole goes.");
+  return holes;
+}
+
+TopoDS_Shape HoleFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+  if (body.IsNull()) fail("There is no body to drill into yet.");
+  return combine(body, tool(doc, body), Operation::Cut, false);
+}
+
+TopoDS_Shape MirrorFeature::build(const Document&, const TopoDS_Shape& body) const {
+  if (body.IsNull()) fail("There is no body to mirror yet.");
+  gp_Ax2 mirror;
+  switch (plane) {
+  case Plane::XY: mirror = gp_Ax2(gp::Origin(), gp::DZ()); break;
+  case Plane::XZ: mirror = gp_Ax2(gp::Origin(), gp::DY()); break;
+  case Plane::YZ: mirror = gp_Ax2(gp::Origin(), gp::DX()); break;
+  case Plane::Face: {
+    const std::vector<TopoDS_Shape> f =
+        bodyShapes(body, face >= 0 ? std::vector<int>{face} : std::vector<int>{},
+                   key.valid() ? std::vector<ShapeKey>{key} : std::vector<ShapeKey>{}, TopAbs_FACE);
+    BRepAdaptor_Surface surface(TopoDS::Face(f[0]));
+    if (surface.GetType() != GeomAbs_Plane) fail("The mirror face is not flat.");
+    mirror = gp_Ax2(surface.Plane().Location(), surface.Plane().Axis().Direction());
+    break;
+  }
+  }
+  gp_Trsf t;
+  t.SetMirror(mirror);
+  return combine(body, BRepBuilderAPI_Transform(body, t, true).Shape(), Operation::Join, false);
+}
+
 TopoDS_Shape FilletFeature::build(const Document&, const TopoDS_Shape& body) const {
   if (radius <= 0) fail("The fillet radius must be positive.");
   BRepFilletAPI_MakeFillet fillet(body);
-  for (const TopoDS_Edge& e : bodyEdges(body, edges)) fillet.Add(radius, e);
+  for (const TopoDS_Shape& e : bodyShapes(body, edges, keys, TopAbs_EDGE)) fillet.Add(radius, TopoDS::Edge(e));
   fillet.Build();
   if (!fillet.IsDone()) fail("Fillet failed (radius too large for the selected edges?).");
   return fillet.Shape();
@@ -318,7 +513,7 @@ TopoDS_Shape FilletFeature::build(const Document&, const TopoDS_Shape& body) con
 TopoDS_Shape ChamferFeature::build(const Document&, const TopoDS_Shape& body) const {
   if (distance <= 0) fail("The chamfer distance must be positive.");
   BRepFilletAPI_MakeChamfer chamfer(body);
-  for (const TopoDS_Edge& e : bodyEdges(body, edges)) chamfer.Add(distance, e);
+  for (const TopoDS_Shape& e : bodyShapes(body, edges, keys, TopAbs_EDGE)) chamfer.Add(distance, TopoDS::Edge(e));
   chamfer.Build();
   if (!chamfer.IsDone()) fail("Chamfer failed (distance too large for the selected edges?).");
   return chamfer.Shape();
@@ -331,7 +526,9 @@ TopoDS_Shape ImportFeature::build(const Document&, const TopoDS_Shape& body) con
 
 // --- document -----------------------------------------------------------------
 
-Document::Document(const Document& other) : m_bodies(other.m_bodies), m_errors(other.m_errors) {
+Document::Document(const Document& other)
+    : m_parameters(other.m_parameters), m_values(other.m_values), m_parameterError(other.m_parameterError),
+      m_bodies(other.m_bodies), m_errors(other.m_errors) {
   for (const auto& f : other.m_history) m_history.push_back(f->clone());
 }
 
@@ -373,13 +570,50 @@ void Document::removeLast() {
   m_errors.resize(m_history.size());
 }
 
+void Document::setParameters(std::vector<Parameter> params) {
+  m_parameters = std::move(params);
+  regenerate(0);
+}
+
+void Document::evaluateParameters() {
+  try {
+    m_values = model::evaluateParameters(m_parameters);
+    m_parameterError.clear();
+  } catch (const std::exception& e) {
+    m_values.clear();
+    m_parameterError = e.what();
+  }
+}
+
+void Document::applyExpressions(Feature& f) const {
+  auto* s = dynamic_cast<SketchFeature*>(&f);
+  const bool sketchUses = s && std::any_of(s->sketch.constraints.begin(), s->sketch.constraints.end(),
+                                           [](const sketch::Constraint& c) { return !c.expr.empty(); });
+  if (!m_parameterError.empty() && (sketchUses || !f.expressions.empty()))
+    fail("Parameters: " + m_parameterError);
+  for (const auto& [field, expr] : f.expressions)
+    if (!f.setValue(field, model::evaluate(expr, m_values))) fail("Unknown size '" + field + "'.");
+  if (!sketchUses) return;
+  bool changed = false;
+  for (sketch::Constraint& c : s->sketch.constraints) {
+    if (c.expr.empty()) continue;
+    const double v = model::evaluate(c.expr, m_values);
+    if (v <= 0) fail("\"" + c.expr + "\" must be a positive size.");
+    if (v != c.value) c.value = v, changed = true;
+  }
+  if (changed && s->sketch.solve() == sketch::SolveResult::Failed)
+    fail("With these parameter values the sketch has no solution.");
+}
+
 void Document::regenerate(size_t from) {
   m_bodies.resize(m_history.size());
   m_errors.resize(m_history.size());
+  evaluateParameters();
   for (size_t i = from; i < m_history.size(); ++i) {
     const TopoDS_Shape before = i == 0 ? TopoDS_Shape() : m_bodies[i - 1];
     m_bodies[i] = before; // a failed feature leaves the body as it was
     try {
+      applyExpressions(*m_history[i]);
       m_bodies[i] = m_history[i]->build(*this, before);
       m_errors[i].clear();
     } catch (const Standard_Failure& e) { // first: in OCCT 8 it is a std::exception

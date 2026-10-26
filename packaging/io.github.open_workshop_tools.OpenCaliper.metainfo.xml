@@ -14,10 +14,11 @@
       designing mechanical parts and objects for 3D printing.
     </p>
     <ul>
-      <li>2D sketches with constraints and dimensions</li>
-      <li>Extrude, revolve, fillet and chamfer</li>
-      <li>Editable history timeline with undo and redo</li>
-      <li>Export to STEP, IGES, STL and OBJ; import STEP and IGES</li>
+      <li>2D sketches with constraints and dimensions, trim, offset and mirror</li>
+      <li>Parameters: name a size once and use it in formulas everywhere</li>
+      <li>Extrude, revolve, fillet, chamfer, shell, pattern, hole and mirror</li>
+      <li>Editable history timeline with undo and redo, autosave</li>
+      <li>Export to STEP, IGES, STL, OBJ and 3MF; import STEP and IGES</li>
     </ul>
     <p>It is built on Open CASCADE Technology and Qt.</p>
   </description>
@@ -36,6 +37,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.0" date="2026-10-27">
+      <description>
+        <p>Parameters and formulas for every size; fillets, chamfers and shells that keep their edges when earlier steps change; trim, offset, mirror and corner fillets in sketches; hole and mirror features; 3MF export with mesh quality; autosave with crash recovery and recent files.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-26">
       <description>
         <p>Rectangle, polygon and slot tools, construction geometry, visible constraints and undo while sketching; shell and pattern; measuring and part properties with weight.</p>

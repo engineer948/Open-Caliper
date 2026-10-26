@@ -24,4 +24,9 @@ TopoDS_Shape makeEntity(const Sketch& s, const gp_Ax3& plane, int entity);
 TopoDS_Compound makeShape(const Sketch& s, const gp_Ax3& plane,
                           const std::vector<int>& entities, const std::vector<int>& points);
 
+// Offset copy of closed loops made of `entities` (lines and arcs), with sharp
+// corners; positive distance grows the loops. Returns the new entities,
+// empty if OCCT cannot offset them.
+std::vector<int> offsetLoops(Sketch& s, const std::vector<int>& entities, double distance);
+
 } // namespace sketch
