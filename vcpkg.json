@@ -1,6 +1,6 @@
 {
   "name": "opencaliper",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Used only by the Windows build; Linux uses system or bundled OpenCASCADE.",
   "dependencies": [
     {

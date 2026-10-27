@@ -91,18 +91,38 @@ int matrixRank(std::vector<double> M, int rows, int cols) {
 
 } // namespace
 
+std::vector<int> Entity::pointList() const {
+  std::vector<int> out;
+  for (int q : p)
+    if (q >= 0) out.push_back(q);
+  for (int q : pts)
+    if (std::find(out.begin(), out.end(), q) == out.end()) out.push_back(q);
+  return out;
+}
+
+bool Entity::uses(int point) const {
+  return std::find(std::begin(p), std::end(p), point) != std::end(p) ||
+         std::find(pts.begin(), pts.end(), point) != pts.end();
+}
+
 bool Sketch::valid() const {
   const int np = int(params.size()), npt = int(points.size()), ne = int(entities.size());
   for (const Point& p : points)
     if (p.x < 0 || p.y < 0 || p.x >= np || p.y >= np) return false;
   for (const Entity& e : entities) {
+    if (e.kind == EntityKind::Spline) {
+      if (e.pts.size() < 2) return false;
+      for (int q : e.pts)
+        if (q < 0 || q >= npt) return false;
+      continue;
+    }
     const int needed = e.kind == EntityKind::Line ? 2 : e.kind == EntityKind::Arc ? 3 : 1;
     for (int i = 0; i < needed; ++i)
       if (e.p[i] < 0 || e.p[i] >= npt) return false;
     if (e.kind == EntityKind::Circle && (e.r < 0 || e.r >= np)) return false;
   }
   auto line = [&](int e) { return e >= 0 && e < ne && entities[e].kind == EntityKind::Line; };
-  auto circular = [&](int e) { return e >= 0 && e < ne && entities[e].kind != EntityKind::Line; };
+  auto circular = [&](int e) { return e >= 0 && e < ne && isCircular(e); };
   auto point = [&](int p) { return p >= 0 && p < npt; };
   for (const Constraint& c : constraints) {
     bool ok = false;
@@ -159,6 +179,13 @@ int Sketch::addArc(int center, int start, int end) {
   return int(entities.size()) - 1;
 }
 
+int Sketch::addSpline(std::vector<int> through) {
+  Entity e{EntityKind::Spline};
+  e.pts = std::move(through);
+  entities.push_back(e);
+  return int(entities.size()) - 1;
+}
+
 int Sketch::addConstraint(const Constraint& c) {
   constraints.push_back(c);
   return int(constraints.size()) - 1;
@@ -179,8 +206,7 @@ void Sketch::removeEntity(int e) {
 std::vector<int> Sketch::usedPoints() const {
   std::vector<bool> used(points.size(), false);
   for (const Entity& e : entities)
-    for (int p : e.p)
-      if (p >= 0) used[p] = true;
+    for (int p : e.pointList()) used[p] = true;
   std::vector<int> result;
   for (int i = 0; i < int(used.size()); ++i)
     if (used[i]) result.push_back(i);
@@ -218,8 +244,8 @@ double Sketch::radius(int e) const {
 std::vector<int> Sketch::freeParams() const {
   std::vector<bool> used(params.size(), false);
   for (const Entity& e : entities) {
-    for (int p : e.p)
-      if (p >= 0 && !points[p].fixed) used[points[p].x] = used[points[p].y] = true;
+    for (int p : e.pointList())
+      if (!points[p].fixed) used[points[p].x] = used[points[p].y] = true;
     if (e.r >= 0) used[e.r] = true;
   }
   std::vector<int> free;

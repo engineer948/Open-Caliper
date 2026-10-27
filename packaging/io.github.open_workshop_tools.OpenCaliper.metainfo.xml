@@ -37,6 +37,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.0" date="2026-10-27">
+      <description>
+        <p>Free-form shapes: splines in sketches, loft through several cross-sections, and symmetric extrudes. Fillets and chamfers that cannot be made now say which edge failed, and broken results are refused instead of being kept.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-27">
       <description>
         <p>Claude, Anthropic's AI assistant, can build and change parts in the open window through MCP (Model Context Protocol). Every change is an undoable step in the timeline. Off by default: Tools > Claude (MCP).</p>

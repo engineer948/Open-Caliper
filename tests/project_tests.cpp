@@ -87,8 +87,56 @@ static void newFeatures() {
   CHECK(lm && lm->plane == MirrorFeature::Plane::XZ);
 }
 
+static void splinesAndLofts() {
+  Document doc;
+  auto bottom = std::make_unique<SketchFeature>();
+  bottom->plane = gp_Ax3(gp::Origin(), gp::DZ(), gp::DX());
+  sketch::Sketch& s = bottom->sketch;
+  const int p = s.addPoint(10, 0);
+  s.addSpline({p, s.addPoint(0, 10), s.addPoint(-10, 0), s.addPoint(0, -10), p});
+  doc.add(std::move(bottom));
+  auto top = std::make_unique<SketchFeature>();
+  top->plane = gp_Ax3(gp_Pnt(0, 0, 20), gp::DZ(), gp::DX());
+  top->sketch.addCircle(top->sketch.addPoint(0, 0), 4);
+  doc.add(std::move(top));
+  auto loft = std::make_unique<LoftFeature>();
+  loft->sketches = {0, 1};
+  loft->ruled = true;
+  doc.add(std::move(loft));
+  auto rim = std::make_unique<SketchFeature>();
+  rim->plane = gp_Ax3(gp::Origin(), gp::DY(), gp::DX());
+  const int a = rim->sketch.addPoint(-2, -2), b = rim->sketch.addPoint(2, -2), c = rim->sketch.addPoint(2, 2),
+            d = rim->sketch.addPoint(-2, 2);
+  rim->sketch.addLine(a, b);
+  rim->sketch.addLine(b, c);
+  rim->sketch.addLine(c, d);
+  rim->sketch.addLine(d, a);
+  doc.add(std::move(rim));
+  auto ex = std::make_unique<ExtrudeFeature>();
+  ex->sketch = 3;
+  ex->distance = 30;
+  ex->symmetric = true;
+  ex->op = Operation::Cut;
+  doc.add(std::move(ex));
+  CHECK(!doc.hasErrors());
+
+  const QString path = QDir::temp().filePath("roundtrip06.ocal");
+  project::save(doc, path);
+  const Document loaded = project::load(path);
+  QFile::remove(path);
+  CHECK(!loaded.hasErrors());
+  CHECK(std::abs(volume(loaded.body()) - volume(doc.body())) < 1e-6);
+  const auto* ls = loaded.as<SketchFeature>(0);
+  CHECK(ls && ls->sketch.entities[0].kind == sketch::EntityKind::Spline && ls->sketch.entities[0].closedSpline());
+  const auto* ll = loaded.as<LoftFeature>(2);
+  CHECK(ll && ll->ruled && ll->sketches == std::vector<int>({0, 1}));
+  const auto* le = loaded.as<ExtrudeFeature>(4);
+  CHECK(le && le->symmetric && le->op == Operation::Cut);
+}
+
 int main() {
   newFeatures();
+  splinesAndLofts();
   Document doc;
   doc.setParameters({{"len", "10"}});
   auto sk = std::make_unique<SketchFeature>();

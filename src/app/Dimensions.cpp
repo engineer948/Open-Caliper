@@ -78,7 +78,7 @@ DimensionList buildDimensions(const Document& doc) {
       for (size_t k = f + 1; k < doc.size(); ++k)
         if (const auto* ex = doc.as<ExtrudeFeature>(k); ex && ex->sketch == int(f)) {
           if (ex->op == Operation::Join && ex->distance > 0)
-            at.Translate(gp_Vec(sf->plane.Direction()) * ex->distance);
+            at.Translate(gp_Vec(sf->plane.Direction()) * (ex->symmetric ? ex->distance / 2 : ex->distance));
           break;
         }
       const gp_Pln plane(at);
@@ -92,9 +92,11 @@ DimensionList buildDimensions(const Document& doc) {
       // Every circle and arc: holes are what people want to resize most.
       for (int e = 0; e < int(s.entities.size()) && !marksHoles; ++e) {
         const sketch::Entity& en = s.entities[e];
-        if (en.kind == EntityKind::Line || en.construction) continue;
+        if (!s.isCircular(e) || en.construction) continue;
         const double r = s.radius(e);
-        if (r < kMin) continue;
+        // A gentle curve drawn as a huge arc: its label would sit far off at
+        // the centre and fill the view.
+        if (r < kMin || (en.kind == EntityKind::Arc && r > size)) continue;
         const gp_Circ circ(gp_Ax2(world(en.p[0]), at.Direction(), at.XDirection()), r);
         std::string expr; // the radius formula, if a parameter drives it
         for (const sketch::Constraint& c : s.constraints)
@@ -121,8 +123,9 @@ DimensionList buildDimensions(const Document& doc) {
       const auto* sf = doc.as<SketchFeature>(size_t(ex->sketch));
       if (!sf || sf->sketch.entities.empty() || std::abs(ex->distance) < kMin) continue;
       const sketch::Sketch& s = sf->sketch;
-      const int p = s.entities[0].p[0];
-      const gp_Pnt from = sketch::toWorld(sf->plane, s.x(p), s.y(p));
+      const int p = s.entities[0].pointList().front();
+      gp_Pnt from = sketch::toWorld(sf->plane, s.x(p), s.y(p));
+      if (ex->symmetric) from.Translate(gp_Vec(sf->plane.Direction()) * (-ex->distance / 2));
       const gp_Pnt to = from.Translated(gp_Vec(sf->plane.Direction()) * ex->distance);
       // A plane that contains the extrude direction, so the label stands up.
       const gp_Pln side(gp_Ax3(from, sf->plane.YDirection(), sf->plane.XDirection()));

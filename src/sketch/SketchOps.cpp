@@ -122,6 +122,7 @@ int pointOn(Sketch& s, P p, int cutter) {
 
 bool trim(Sketch& s, int entity, double u, double v) {
   if (entity < 0 || entity >= int(s.entities.size())) return false;
+  if (s.entities[entity].kind == EntityKind::Spline) return false; // only lines, circles and arcs
   const Curve me = curveOf(s, entity);
   const double scale = me.line ? std::hypot(me.b.x - me.a.x, me.b.y - me.a.y) : me.r;
   const double tol = 1e-7 * std::max(1.0, scale);
@@ -129,7 +130,7 @@ bool trim(Sketch& s, int entity, double u, double v) {
   // Crossings as (position along this curve, cutting curve).
   std::vector<std::pair<double, int>> cuts;
   for (int o = 0; o < int(s.entities.size()); ++o) {
-    if (o == entity) continue;
+    if (o == entity || s.entities[o].kind == EntityKind::Spline) continue;
     const Curve other = curveOf(s, o);
     for (const P& p : crossings(me, other)) {
       if (!contains(me, p, tol) || !contains(other, p, tol)) continue;
@@ -206,7 +207,7 @@ bool filletCorner(Sketch& s, int point, double radius) {
   for (int e = 0; e < int(s.entities.size()); ++e) {
     const Entity& en = s.entities[e];
     if (en.kind != EntityKind::Line) {
-      if (std::find(std::begin(en.p), std::end(en.p), point) != std::end(en.p)) return false;
+      if (en.uses(point)) return false;
       continue;
     }
     for (int k : {0, 1})
@@ -282,6 +283,12 @@ std::vector<int> mirror(Sketch& s, const std::vector<int>& entities, int axis) {
       s.addConstraint({K::Equal, e, copy});
       break;
     case EntityKind::Arc: copy = s.addArc(mirrored(en.p[0]), mirrored(en.p[2]), mirrored(en.p[1])); break; // turns the other way
+    case EntityKind::Spline: {
+      std::vector<int> pts;
+      for (int p : en.pts) pts.push_back(mirrored(p));
+      copy = s.addSpline(pts);
+      break;
+    }
     }
     s.entities[copy].construction = en.construction;
     copies.push_back(copy);
@@ -291,6 +298,7 @@ std::vector<int> mirror(Sketch& s, const std::vector<int>& entities, int axis) {
 
 int offsetCurve(Sketch& s, int entity, double distance) {
   const Entity en = s.entities[entity];
+  if (en.kind == EntityKind::Spline) return -1;
   if (en.kind == EntityKind::Line) {
     const P a = at(s, en.p[0]), b = at(s, en.p[1]);
     const double len = std::hypot(b.x - a.x, b.y - a.y);
@@ -316,8 +324,13 @@ bool formsClosedLoops(const Sketch& s, const std::vector<int>& entities) {
   bool anyOpen = false;
   for (int e : entities) {
     const Entity& en = s.entities[e];
-    if (en.kind == EntityKind::Circle) continue;
+    if (en.kind == EntityKind::Circle || en.closedSpline()) continue;
     anyOpen = true;
+    if (en.kind == EntityKind::Spline) {
+      ++degree[en.pts.front()];
+      ++degree[en.pts.back()];
+      continue;
+    }
     ++degree[en.kind == EntityKind::Line ? en.p[0] : en.p[1]];
     ++degree[en.kind == EntityKind::Line ? en.p[1] : en.p[2]];
   }

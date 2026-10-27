@@ -244,7 +244,51 @@ static void offsets() {
   CHECK(!formsClosedLoops(r, {loop[0], loop[1]}));
 }
 
+static void splineOps() {
+  Sketch s;
+  const int a = s.addPoint(0, 0), b = s.addPoint(10, 5), c = s.addPoint(20, 0);
+  const int sp = s.addSpline({a, b, c});
+  CHECK(s.valid());
+  CHECK(!s.isCircular(sp));
+  CHECK(s.usedPoints().size() == 3);
+  CHECK(s.dof() == 6);
+  // A line closes it; the spline's ends count as loop ends.
+  const int l = s.addLine(c, a);
+  CHECK(formsClosedLoops(s, {sp, l}));
+  CHECK(!formsClosedLoops(s, {sp}));
+  // Splines are not trimmed or offset, and take no line/circle constraints.
+  CHECK(!trim(s, sp, 10, 5));
+  CHECK(offsetCurve(s, sp, 1) < 0);
+  Sketch bad = s;
+  bad.addConstraint({K::Horizontal, sp});
+  CHECK(!bad.valid());
+  // Mirror across the closing line copies every point.
+  const std::vector<int> copies = mirror(s, {sp}, l);
+  CHECK(copies.size() == 1 && s.entities[copies[0]].kind == EntityKind::Spline);
+  const Entity& m = s.entities[copies[0]];
+  CHECK(m.pts.size() == 3 && m.pts[0] == a && m.pts[2] == c && near(s.y(m.pts[1]), -5));
+  CHECK(s.solve() == SolveResult::Ok);
+  // Points of a spline can be fixed and dragged by the solver like any other.
+  s.points[a].fixed = true;
+  s.addConstraint({K::Distance, a, b, 15});
+  CHECK(s.solve() == SolveResult::Ok);
+  CHECK(near(s.distance(a, b), 15));
+  // Removing it frees its middle point.
+  Sketch t;
+  t.addSpline({t.addPoint(0, 0), t.addPoint(1, 1), t.addPoint(2, 0)});
+  t.removeEntity(0);
+  CHECK(t.usedPoints().empty() && t.dof() == 0);
+  // Closed spline: first point repeated at the end.
+  Sketch u;
+  const int p = u.addPoint(0, 0);
+  const int closed = u.addSpline({p, u.addPoint(5, 5), u.addPoint(10, 0), p});
+  CHECK(u.entities[closed].closedSpline());
+  CHECK(u.entities[closed].pointList().size() == 3);
+  CHECK(!formsClosedLoops(u, {closed})); // handled on its own, like a circle
+}
+
 int main() {
+  splineOps();
   symmetricAndMirror();
   trimming();
   cornerFillet();

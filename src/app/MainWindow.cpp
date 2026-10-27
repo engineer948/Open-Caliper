@@ -156,6 +156,22 @@ public:
     m_form->addRow(label, box);
     return box;
   }
+  QCheckBox* check(const QString& label, const QString& text, bool checked) {
+    auto* box = new QCheckBox(text, this);
+    box->setChecked(checked);
+    m_form->addRow(label, box);
+    return box;
+  }
+  QListWidget* checklist(const QString& label, const QStringList& items, const std::vector<bool>& checked) {
+    auto* list = new QListWidget(this);
+    for (int i = 0; i < int(items.size()); ++i) {
+      auto* item = new QListWidgetItem(items[i], list);
+      item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+      item->setCheckState(checked[size_t(i)] ? Qt::Checked : Qt::Unchecked);
+    }
+    m_form->addRow(label, list);
+    return list;
+  }
   bool run() {
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
@@ -372,6 +388,7 @@ void MainWindow::buildSketchUi() {
       {tr("Rectangle"), "rectangle", "R", SketchEditor::Tool::Rectangle},
       {tr("Circle"), "circle", "C", SketchEditor::Tool::Circle},
       {tr("Arc"), "arc", "A", SketchEditor::Tool::Arc},
+      {tr("Spline"), "spline", "B", SketchEditor::Tool::Spline},
       {tr("Polygon"), "polygon", "G", SketchEditor::Tool::Polygon},
       {tr("Slot"), "slot", "K", SketchEditor::Tool::Slot},
       {tr("Trim"), "trim", "W", SketchEditor::Tool::Trim},
@@ -463,6 +480,9 @@ void MainWindow::buildModelUi() {
       [this] { extrude(); });
   add(action(tr("Revolve"), "revolve", QKeySequence("Shift+R"), tr("Spin a closed sketch around an axis")),
       [this] { revolve(); });
+  add(action(tr("Loft"), "loft", QKeySequence("Shift+L"),
+             tr("A smooth solid through the closed profiles of several sketches (cross-sections)")),
+      [this] { loft(); });
   add(action(tr("Fillet"), "fillet", QKeySequence("Shift+F"), tr("Round the selected edges")),
       [this] { filletOrChamfer(true); });
   add(action(tr("Chamfer"), "chamfer", QKeySequence("Shift+C"), tr("Bevel the selected edges")),
@@ -647,12 +667,14 @@ void MainWindow::extrude(int editIndex) {
   const bool hasBody = !(old ? m_doc.bodyBefore(editIndex) : m_doc.body()).IsNull();
   FormDialog dlg(this, tr("Extrude"), m_doc.values());
   SizeField* distance = dlg.size(tr("Distance:"), old ? old->distance : 10, exprOf(old, "distance"), -1e6, 1e6, " mm");
+  QCheckBox* symmetric = dlg.check({}, tr("Symmetric (half the distance to each side)"), old && old->symmetric);
   QComboBox* op = operationChoice(dlg, hasBody, old ? old->op : Operation::Join);
   if (!dlg.run()) return;
 
   auto f = std::make_unique<ExtrudeFeature>();
   f->sketch = sketch;
   f->distance = distance->value();
+  f->symmetric = symmetric->isChecked();
   setExpr(*f, "distance", distance);
   f->op = Operation(op->currentIndex());
   if (old) replaceFeature(editIndex, std::move(f));
@@ -679,6 +701,55 @@ void MainWindow::revolve(int editIndex) {
   f->axis = axis->currentIndex() == 0 ? RevolveFeature::Axis::SketchY : RevolveFeature::Axis::SketchX;
   f->angle = angle->value();
   setExpr(*f, "angle", angle);
+  f->op = Operation(op->currentIndex());
+  if (old) replaceFeature(editIndex, std::move(f));
+  else addFeature(std::move(f));
+}
+
+void MainWindow::loft(int editIndex) {
+  const auto* old = editIndex >= 0 ? m_doc.as<LoftFeature>(editIndex) : nullptr;
+  // Sketches before this step; picked in the view (Shift+click), else every unused one.
+  std::vector<int> picked;
+  const Handle(AIS_InteractiveContext)& ctx = m_viewer->context();
+  for (ctx->InitSelected(); ctx->MoreSelected(); ctx->NextSelected())
+    for (const auto& [ais, index] : m_sketchAis)
+      if (ctx->SelectedInteractive() == ais) picked.push_back(index);
+  const size_t end = old ? size_t(editIndex) : m_doc.size();
+  std::vector<int> sketches;
+  std::vector<bool> checked;
+  QStringList names;
+  for (size_t i = 0; i < end; ++i) {
+    if (!m_doc.as<SketchFeature>(i)) continue;
+    const int s = int(i);
+    const bool on = old ? std::count(old->sketches.begin(), old->sketches.end(), s) > 0
+                        : picked.size() >= 2 ? std::count(picked.begin(), picked.end(), s) > 0
+                                             : !m_doc.isConsumed(i);
+    if (!on && !old && m_doc.isConsumed(i)) continue; // already part of a solid
+    sketches.push_back(s);
+    checked.push_back(on);
+    names << QString("%1. %2").arg(i + 1).arg(describe(i));
+  }
+  if (sketches.size() < 2) {
+    hint(tr("Loft: draw two or more closed sketches on parallel planes (cross-sections), then click Loft."));
+    return;
+  }
+  FormDialog dlg(this, tr("Loft"), m_doc.values());
+  dlg.text({}, tr("The checked sketches are the cross-sections, in timeline order.\n"
+                  "Each one needs a single closed loop without holes."));
+  QListWidget* list = dlg.checklist(tr("Sections:"), names, checked);
+  QCheckBox* ruled = dlg.check({}, tr("Straight between sections (ruled)"), old && old->ruled);
+  const bool hasBody = !(old ? m_doc.bodyBefore(editIndex) : m_doc.body()).IsNull();
+  QComboBox* op = operationChoice(dlg, hasBody, old ? old->op : Operation::Join);
+  if (!dlg.run()) return;
+
+  auto f = std::make_unique<LoftFeature>();
+  for (int i = 0; i < list->count(); ++i)
+    if (list->item(i)->checkState() == Qt::Checked) f->sketches.push_back(sketches[size_t(i)]);
+  if (f->sketches.size() < 2) {
+    hint(tr("Loft: check at least two sketches."));
+    return;
+  }
+  f->ruled = ruled->isChecked();
   f->op = Operation(op->currentIndex());
   if (old) replaceFeature(editIndex, std::move(f));
   else addFeature(std::move(f));
@@ -751,12 +822,12 @@ void MainWindow::pattern(int editIndex) {
   std::vector<int> sources;
   QStringList names;
   for (size_t i = 0; i < end; ++i)
-    if (m_doc.as<ExtrudeFeature>(i) || m_doc.as<RevolveFeature>(i) || m_doc.as<HoleFeature>(i)) {
+    if (m_doc.as<ExtrudeFeature>(i) || m_doc.as<RevolveFeature>(i) || m_doc.as<LoftFeature>(i) || m_doc.as<HoleFeature>(i)) {
       sources.push_back(int(i));
       names << QString("%1. %2").arg(i + 1).arg(describe(i));
     }
   if (sources.empty()) {
-    hint(tr("Pattern: make an extrude, revolve or hole first (for example a hole cut), then repeat it."));
+    hint(tr("Pattern: make an extrude, revolve, loft or hole first (for example a hole cut), then repeat it."));
     return;
   }
   const int current = old ? int(std::find(sources.begin(), sources.end(), old->source) - sources.begin())
@@ -1073,6 +1144,8 @@ void MainWindow::editFeature(int index) {
     extrude(index);
   } else if (m_doc.as<RevolveFeature>(index)) {
     revolve(index);
+  } else if (m_doc.as<LoftFeature>(index)) {
+    loft(index);
   } else if (m_doc.as<FilletFeature>(index)) {
     filletOrChamfer(true, index);
   } else if (m_doc.as<ChamferFeature>(index)) {
@@ -1094,7 +1167,7 @@ void MainWindow::deleteFeature(int index) {
   if (index < 0 || index >= int(m_doc.size()) || m_editor->isActive()) return;
   int dependents = 0;
   for (size_t i = index + 1; i < m_doc.size(); ++i)
-    if (m_doc.feature(i).sketchInput() == index) ++dependents;
+    for (int in : m_doc.feature(i).inputs()) dependents += in == index;
   if (dependents > 0 &&
       QMessageBox::question(this, tr("Delete"), tr("Steps built from this sketch will be deleted too. Continue?")) !=
           QMessageBox::Yes)
@@ -1473,7 +1546,9 @@ QString MainWindow::describe(size_t i) const {
   if (const auto* s = m_doc.as<SketchFeature>(i))
     return tr("Sketch (%n curve(s))", "", int(s->sketch.entities.size()));
   if (const auto* e = m_doc.as<ExtrudeFeature>(i))
-    return tr("Extrude %1 mm, %2").arg(num(e->distance), opName(e->op));
+    return (e->symmetric ? tr("Extrude %1 mm symmetric, %2") : tr("Extrude %1 mm, %2")).arg(num(e->distance), opName(e->op));
+  if (const auto* l = m_doc.as<LoftFeature>(i))
+    return tr("Loft through %n section(s), %1", "", int(l->sketches.size())).arg(opName(l->op));
   if (const auto* r = m_doc.as<RevolveFeature>(i))
     return tr("Revolve %1°, %2").arg(num(r->angle), opName(r->op));
   if (const auto* f = m_doc.as<FilletFeature>(i))
@@ -1608,23 +1683,29 @@ public:
     w.hint(tr("Claude saved %1").arg(QFileInfo(target).fileName()));
     return {};
   }
-  QString screenshot(const QString& name, QByteArray& png) override {
+  QString screenshot(const QString& name, bool dimensions, QByteArray& png) override {
     const std::pair<const char*, V3d_TypeOfOrientation> views[] = {
         {"iso", V3d_XposYnegZpos}, {"front", V3d_Yneg}, {"back", V3d_Ypos}, {"top", V3d_Zpos},
         {"bottom", V3d_Zneg},      {"left", V3d_Xneg},  {"right", V3d_Xpos}};
     const Handle(V3d_View)& view = w.m_viewer->view();
     if (view.IsNull()) return "The 3D view is not ready yet.";
     // Look from the asked side, take the picture, then put the user's camera back.
+    const auto it = std::find_if(std::begin(views), std::end(views), [&](const auto& v) { return name == v.first; });
+    if (name != "current" && it == std::end(views)) return "view: iso, front, back, top, bottom, left, right or current";
+    // Without the labels, so the fit is to the part (a big radius label can be far off).
+    const Handle(AIS_InteractiveContext)& ctx = w.m_viewer->context();
+    if (!dimensions)
+      for (const auto& [dim, ref] : w.m_dimensions) ctx->Erase(dim, false);
     Handle(Graphic3d_Camera) saved = new Graphic3d_Camera();
     saved->Copy(view->Camera());
     if (name != "current") {
-      const auto it = std::find_if(std::begin(views), std::end(views), [&](const auto& v) { return name == v.first; });
-      if (it == std::end(views)) return "view: iso, front, back, top, bottom, left, right or current";
       view->SetProj(it->second);
       view->FitAll(0.05, false);
       view->ZFitAll();
     }
     QImage image = w.m_viewer->grabFramebuffer();
+    if (!dimensions)
+      for (const auto& [dim, ref] : w.m_dimensions) ctx->Display(dim, 0, 0, false);
     view->Camera()->Copy(saved);
     view->Invalidate();
     w.m_viewer->redraw();

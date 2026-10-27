@@ -188,11 +188,49 @@ static void protocol() {
   CHECK(std::as_const(r)["error"]["code"].toInt() == -32601);
 }
 
+static void curvesAndLofts() {
+  mcp::FileHost host;
+  // A D shape: line plus a three-point arc; and a spline loop.
+  QJsonObject r = call(host, "create_sketch", R"({"plane": "XY", "curves": [
+      {"type": "line", "from": [0, -10], "to": [0, 10]},
+      {"type": "arc3", "start": [0, 10], "mid": [10, 0], "end": [0, -10]}]})");
+  CHECK(!r.contains("error"));
+  CHECK(std::as_const(r)["step"]["closed_profile"].toBool());
+  r = call(host, "add_feature", R"({"feature": {"type": "extrude", "sketch": 0, "distance": 2}})");
+  CHECK(near(volume(r), std::numbers::pi * 100 / 2 * 2));
+
+  // An arc whose end is off its circle says so.
+  r = call(host, "create_sketch", R"({"plane": "XY", "offset": 10, "curves": [
+      {"type": "arc", "center": [0, 0], "start": [10, 0], "end": [0, 12]}]})");
+  CHECK(std::as_const(r)["created"].toArray().at(0)["warning"].toString().contains("moved"));
+  CHECK(!call(host, "delete_feature", R"({"index": 2})").contains("error"));
+
+  // Loft from the D (a new copy at z=0) up to a spline loop at z=20.
+  r = call(host, "create_sketch", R"({"plane": "XY", "offset": -20, "curves": [
+      {"type": "spline", "closed": true, "points": [[5, 0], [0, 5], [-5, 0], [0, -5]]}]})");
+  CHECK(!r.contains("error"));
+  const QJsonObject spline = std::as_const(r)["step"]["curves"].toArray().at(0).toObject();
+  CHECK(spline["kind"].toString() == "spline" && spline["closed"].toBool() && spline["points"].toArray().size() == 4);
+  r = call(host, "add_feature", R"({"feature": {"type": "loft", "sketches": [2, 0]}})");
+  CHECK(!r.contains("error"));
+  CHECK(volume(r) > std::numbers::pi * 100 + 20 * 50);
+
+  // Symmetric extrude around the sketch plane.
+  mcp::FileHost h2;
+  call(h2, "create_sketch", R"({"plane": "XY", "curves": [{"type": "rect", "center": [0, 0], "width": 10, "height": 10}]})");
+  r = call(h2, "add_feature", R"({"feature": {"type": "extrude", "sketch": 0, "distance": 8, "symmetric": true}})");
+  CHECK(near(volume(r), 800));
+  CHECK(near(std::as_const(r)["body"]["min"].toArray().at(2).toDouble(), -4));
+  const QString err = call(h2, "add_feature", R"({"feature": {"type": "fillet", "edges": [1], "radius": 30}})")["error"].toString();
+  CHECK(err.contains("Fillet failed at edge 1: the radius"));
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   QCoreApplication::setApplicationVersion("test");
   buildBox();
   sketchShapes();
+  curvesAndLofts();
   protocol();
   if (failures) std::printf("%d failure(s)\n", failures);
   else std::printf("all MCP tests passed\n");

@@ -125,7 +125,12 @@ int runStdio() {
 
   FileHost file;
   QLocalSocket window;
-  const QString path = socketPath();
+  // A window from the Flatpak listens inside its app directory, which a
+  // `--mcp` started outside the sandbox can still reach.
+  QStringList paths{socketPath()};
+  const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+  if (!runtime.isEmpty() && !qEnvironmentVariableIsSet("FLATPAK_ID"))
+    paths << runtime + "/app/io.github.open_workshop_tools.OpenCaliper/opencaliper-mcp";
   const ToolCall call = [&](const QString& name, const QJsonObject& args) -> QJsonObject {
     if (!enabled())
       return textResult("Claude is turned off in OpenCaliper. Ask the user to open OpenCaliper and turn on "
@@ -133,9 +138,10 @@ int runStdio() {
                         true);
     // The open window when there is one (checked on every call: it may have
     // been opened or closed since), else a project in this process.
-    if (window.state() != QLocalSocket::ConnectedState) {
+    for (const QString& p : paths) {
+      if (window.state() == QLocalSocket::ConnectedState) break;
       window.abort();
-      window.connectToServer(path);
+      window.connectToServer(p);
       window.waitForConnected(300);
     }
     if (window.state() == QLocalSocket::ConnectedState) {

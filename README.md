@@ -7,15 +7,16 @@ Every step stays editable in the timeline.
 
 ![OpenCaliper](docs/screenshot.png)
 
-- 2D sketches: lines, rectangles, circles, arcs, polygons, slots, with
+- 2D sketches: lines, rectangles, circles, arcs, splines, polygons, slots, with
   constraints (coincident, horizontal, vertical, parallel, perpendicular,
   tangent, equal, symmetric, fix) and dimensions
 - Trim, offset, mirror and corner fillets in sketches, construction (helper)
   geometry, constraint labels, undo inside sketches
 - Parameters: name a size once (`width = 50`) and use formulas everywhere
   (`width / 2 + 5`); change it and the whole part follows
-- Extrude, revolve, fillet, chamfer, shell, screw holes (M2 to M12, counterbored
-  or countersunk), linear and circular patterns, mirror; join, cut, intersect
+- Extrude (one way or symmetric), revolve, loft through several cross-sections,
+  fillet, chamfer, shell, screw holes (M2 to M12, counterbored or countersunk),
+  linear and circular patterns, mirror; join, cut, intersect
 - Measure distances, angles, lengths and areas; volume, size and weight of the part
 - Sketch on the origin planes or on any flat face of the part
 - Dimensions on the model: hole diameters, sketch sizes and extrude depths;

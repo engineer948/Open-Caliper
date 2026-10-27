@@ -3,6 +3,8 @@
 #include "sketch/SketchShape.h"
 
 #include <Aspect_Grid.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRep_Builder.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
@@ -14,6 +16,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 
+#include <limits>
 #include <map>
 
 #include <algorithm>
@@ -165,8 +168,23 @@ SketchEditor::Item SketchEditor::hitTest(double u, double v) const {
   double bestDist = tol;
   for (int i = 0; i < int(m_sketch.entities.size()); ++i) {
     const Entity& e = m_sketch.entities[i];
-    const double cx = m_sketch.x(e.p[0]), cy = m_sketch.y(e.p[0]);
     double d = 0;
+    if (e.kind == EntityKind::Spline) { // distance to a polyline along the curve
+      const Handle(Geom2d_BSplineCurve) c = splineCurve(m_sketch, i);
+      if (c.IsNull()) continue;
+      constexpr int n = 128;
+      const double t0 = c->FirstParameter(), t1 = c->LastParameter();
+      d = std::numeric_limits<double>::max();
+      gp_Pnt2d prev = c->Value(t0);
+      for (int k = 1; k <= n; ++k) {
+        const gp_Pnt2d next = c->Value(t0 + (t1 - t0) * k / n);
+        d = std::min(d, segmentDistance(u, v, prev.X(), prev.Y(), next.X(), next.Y()));
+        prev = next;
+      }
+      if (d < bestDist) bestDist = d, best = {false, i};
+      continue;
+    }
+    const double cx = m_sketch.x(e.p[0]), cy = m_sketch.y(e.p[0]);
     if (e.kind == EntityKind::Line) {
       d = segmentDistance(u, v, cx, cy, m_sketch.x(e.p[1]), m_sketch.y(e.p[1]));
     } else {
@@ -194,6 +212,7 @@ SketchEditor::Selected SketchEditor::selected() const {
   Selected s;
   for (const Item& it : m_selection) {
     if (it.isPoint) s.points.push_back(it.index);
+    else if (m_sketch.entities[it.index].kind == EntityKind::Spline) s.splines.push_back(it.index);
     else if (m_sketch.isCircular(it.index)) s.circles.push_back(it.index);
     else s.lines.push_back(it.index);
   }
@@ -265,12 +284,45 @@ void SketchEditor::toolClick(const Pick& pick) {
     m_picks.clear();
     break;
   }
+  case Tool::Spline: { // through every click; clicking the first point again closes it
+    const double near = m_viewer->pixelsToWorld(kSnapPixels);
+    if (k.size() >= 2 && std::hypot(k.back().u - k[k.size() - 2].u, k.back().v - k[k.size() - 2].v) < 1e-9) {
+      m_picks.pop_back(); // the same point twice
+      return;
+    }
+    if (k.size() >= 4 && std::hypot(k.back().u - k[0].u, k.back().v - k[0].v) < near) {
+      m_picks.pop_back();
+      finishSpline(true);
+    }
+    redrawPreview();
+    return;
+  }
   case Tool::Select:
   case Tool::Trim: // handled in mousePress
   case Tool::Fillet:
     m_picks.clear();
     return;
   }
+  reportState();
+  redraw();
+}
+
+void SketchEditor::finishSpline(bool closed) {
+  if (m_picks.size() < (closed ? 3u : 2u)) {
+    cancelOperation();
+    return;
+  }
+  remember();
+  std::vector<int> pts;
+  for (const Pick& p : m_picks) pts.push_back(resolve(p));
+  if (closed) pts.push_back(pts.front());
+  const int e = m_sketch.addSpline(pts);
+  if (splineCurve(m_sketch, e).IsNull()) { // e.g. a point visited twice in a row
+    m_sketch = m_undo.back();
+    forget();
+    emit message(tr("Spline: these points do not make a curve."));
+  }
+  m_picks.clear();
   reportState();
   redraw();
 }
@@ -431,7 +483,7 @@ void SketchEditor::constrain(ConstraintKind kind) {
     break;
   case K::Horizontal:
   case K::Vertical:
-    if (!s.lines.empty() && s.points.empty() && s.circles.empty())
+    if (!s.lines.empty() && s.points.empty() && s.circles.empty() && s.splines.empty())
       for (int l : s.lines) cs.push_back({kind, l});
     break;
   case K::Parallel:
@@ -482,8 +534,7 @@ void SketchEditor::toggleFix() {
   for (const Item& it : m_selection) {
     if (it.isPoint) pts.push_back(it.index);
     else
-      for (int p : m_sketch.entities[it.index].p)
-        if (p >= 0) pts.push_back(p);
+      for (int p : m_sketch.entities[it.index].pointList()) pts.push_back(p);
   }
   if (pts.empty()) {
     emit message(tr("Fix: select points or curves."));
@@ -535,7 +586,7 @@ void SketchEditor::offsetSelection() {
 void SketchEditor::mirrorSelection() {
   int axis = -1; // the last selected line
   for (auto it = m_selection.rbegin(); it != m_selection.rend() && axis < 0; ++it)
-    if (!it->isPoint && !m_sketch.isCircular(it->index)) axis = it->index;
+    if (!it->isPoint && m_sketch.entities[it->index].kind == EntityKind::Line) axis = it->index;
   std::vector<int> ents;
   for (const Item& it : m_selection)
     if (!it.isPoint && it.index != axis) ents.push_back(it.index);
@@ -564,7 +615,8 @@ void SketchEditor::deleteSelection() {
 
 bool SketchEditor::mousePress(QMouseEvent* e) {
   if (e->button() == Qt::RightButton && !m_picks.empty()) {
-    cancelOperation();
+    if (m_tool == Tool::Spline) finishSpline(false);
+    else cancelOperation();
     return true;
   }
   if (e->button() != Qt::LeftButton) return false;
@@ -658,8 +710,14 @@ bool SketchEditor::mouseRelease(QMouseEvent* e) {
 
 bool SketchEditor::keyPress(QKeyEvent* e) {
   switch (e->key()) {
+  case Qt::Key_Return:
+  case Qt::Key_Enter:
+    if (m_tool != Tool::Spline || m_picks.empty()) return false;
+    finishSpline(false);
+    return true;
   case Qt::Key_Escape:
-    if (!m_picks.empty()) cancelOperation();
+    if (!m_picks.empty() && m_tool == Tool::Spline) finishSpline(false);
+    else if (!m_picks.empty()) cancelOperation();
     else if (m_tool != Tool::Select) setTool(Tool::Select);
     else {
       m_selection.clear();
@@ -782,6 +840,16 @@ void SketchEditor::redrawPreview() {
     marker.addPoint(h.u, h.v);
     add(makeShape(marker, m_plane, {}, {0}));
     if (m_tool == Tool::Line && k.size() == 1) add(makeSegment(m_plane, k[0].u, k[0].v, h.u, h.v));
+    if (m_tool == Tool::Spline && !k.empty()) {
+      std::vector<std::pair<double, double>> pts;
+      for (const Pick& p : k) pts.emplace_back(p.u, p.v);
+      pts.emplace_back(h.u, h.v);
+      add(makeSpline(m_plane, interpolate(pts, false)));
+      Sketch dots; // the clicked points
+      std::vector<int> ids;
+      for (const Pick& p : k) ids.push_back(dots.addPoint(p.u, p.v));
+      add(makeShape(dots, m_plane, {}, ids));
+    }
     if (m_tool == Tool::Circle && k.size() == 1) add(makeCircle(m_plane, k[0].u, k[0].v, std::hypot(h.u - k[0].u, h.v - k[0].v)));
     if (m_tool == Tool::Arc && k.size() == 1) add(makeSegment(m_plane, k[0].u, k[0].v, h.u, h.v));
     if (m_tool == Tool::Arc && k.size() == 2) add(makeArc(m_plane, k[0].u, k[0].v, k[1].u, k[1].v, h.u, h.v));

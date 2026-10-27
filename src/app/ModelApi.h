@@ -28,8 +28,9 @@ public:
   virtual QString newProject() = 0;
   virtual QString openProject(const QString& path) = 0;
   virtual QString saveProject(const QString& path) = 0; // empty: the current path
-  // PNG of the 3D view from "iso", "front", "top", ... or "current".
-  virtual QString screenshot(const QString& view, QByteArray& png) = 0;
+  // PNG of the 3D view from "iso", "front", "top", ... or "current"; the
+  // dimension labels only when `dimensions`.
+  virtual QString screenshot(const QString& view, bool dimensions, QByteArray& png) = 0;
 };
 
 // A document in this process, for `opencaliper --mcp` without a window.
@@ -44,7 +45,7 @@ public:
   QString newProject() override;
   QString openProject(const QString& path) override;
   QString saveProject(const QString& path) override;
-  QString screenshot(const QString& view, QByteArray& png) override;
+  QString screenshot(const QString& view, bool dimensions, QByteArray& png) override;
 
 private:
   model::Document m_doc;

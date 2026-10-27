@@ -41,7 +41,7 @@ template <> struct Names<MirrorFeature::Plane> {
   static constexpr const char* list[] = {"xy", "xz", "yz", "face"};
 };
 template <> struct Names<sketch::EntityKind> {
-  static constexpr const char* list[] = {"line", "circle", "arc"};
+  static constexpr const char* list[] = {"line", "circle", "arc", "spline"};
 };
 template <> struct Names<sketch::ConstraintKind> {
   static constexpr const char* list[] = {"coincident",     "horizontal", "vertical",       "parallel",
@@ -116,9 +116,12 @@ QJsonObject writeSketch(const SketchFeature& f) {
   QJsonArray params, points, entities, constraints;
   for (double v : s.params) params.append(v);
   for (const sketch::Point& pt : s.points) points.append(QJsonObject{{"x", pt.x}, {"y", pt.y}, {"fixed", pt.fixed}});
-  for (const sketch::Entity& e : s.entities)
-    entities.append(QJsonObject{{"kind", nameOf(e.kind)}, {"p", QJsonArray{e.p[0], e.p[1], e.p[2]}}, {"r", e.r},
-                                {"construction", e.construction}});
+  for (const sketch::Entity& e : s.entities) {
+    QJsonObject o{{"kind", nameOf(e.kind)}, {"p", QJsonArray{e.p[0], e.p[1], e.p[2]}}, {"r", e.r},
+                  {"construction", e.construction}};
+    if (e.kind == sketch::EntityKind::Spline) o["points"] = intList(e.pts);
+    entities.append(o);
+  }
   for (const sketch::Constraint& c : s.constraints) {
     QJsonObject o{{"kind", nameOf(c.kind)}, {"a", c.a}, {"b", c.b}, {"value", c.value}};
     if (!c.expr.empty()) o["expr"] = QString::fromStdString(c.expr);
@@ -146,6 +149,7 @@ std::unique_ptr<SketchFeature> readSketch(const QJsonObject& o) {
     for (int i = 0; i < 3; ++i) en.p[i] = p[i].toInt();
     en.r = e["r"].toInt();
     en.construction = e["construction"].toBool(); // absent in files from 0.1/0.2
+    en.pts = intList(e["points"]);                // splines (0.6)
     s.entities.push_back(en);
   }
   for (const QJsonValue& v : o["constraints"].toArray()) {
@@ -173,7 +177,10 @@ TopoDS_Shape brepShape(const std::string& text) {
 QJsonObject writeFeatureData(const Feature& f) {
   if (auto* s = dynamic_cast<const SketchFeature*>(&f)) return writeSketch(*s);
   if (auto* e = dynamic_cast<const ExtrudeFeature*>(&f))
-    return {{"type", "extrude"}, {"sketch", e->sketch}, {"distance", e->distance}, {"op", nameOf(e->op)}};
+    return {{"type", "extrude"}, {"sketch", e->sketch}, {"distance", e->distance}, {"symmetric", e->symmetric},
+            {"op", nameOf(e->op)}};
+  if (auto* l = dynamic_cast<const LoftFeature*>(&f))
+    return {{"type", "loft"}, {"sketches", intList(l->sketches)}, {"ruled", l->ruled}, {"op", nameOf(l->op)}};
   if (auto* r = dynamic_cast<const RevolveFeature*>(&f))
     return {{"type", "revolve"}, {"sketch", r->sketch}, {"axis", nameOf(r->axis)}, {"angle", r->angle}, {"op", nameOf(r->op)}};
   if (auto* fi = dynamic_cast<const FilletFeature*>(&f))
@@ -214,8 +221,16 @@ std::unique_ptr<Feature> readFeatureData(const QJsonObject& o) {
     auto e = std::make_unique<ExtrudeFeature>();
     e->sketch = o["sketch"].toInt();
     e->distance = o["distance"].toDouble();
+    e->symmetric = o["symmetric"].toBool(); // absent before 0.6
     e->op = valueOf<Operation>(o["op"]);
     return e;
+  }
+  if (type == "loft") {
+    auto l = std::make_unique<LoftFeature>();
+    l->sketches = intList(o["sketches"]);
+    l->ruled = o["ruled"].toBool();
+    l->op = valueOf<Operation>(o["op"]);
+    return l;
   }
   if (type == "revolve") {
     auto r = std::make_unique<RevolveFeature>();

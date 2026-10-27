@@ -13,12 +13,13 @@
 #include <functional>
 
 // Interactive 2D sketching on a plane of the 3D view.
-// Left click = current tool, right click / Esc = stop, Delete = remove selection,
+// Left click = current tool, right click / Esc = stop (a spline: finish),
+// Enter = finish a spline, Delete = remove selection,
 // middle drag = pan, wheel = zoom.
 class SketchEditor : public QObject, public InputHandler {
   Q_OBJECT
 public:
-  enum class Tool { Select, Line, Rectangle, Circle, Arc, Polygon, Slot, Trim, Fillet };
+  enum class Tool { Select, Line, Rectangle, Circle, Arc, Spline, Polygon, Slot, Trim, Fillet };
 
   explicit SketchEditor(Viewer* viewer, QObject* parent = nullptr);
 
@@ -67,9 +68,9 @@ private:
     bool operator==(const Item&) const = default;
   };
   struct Selected { // selection split by type
-    std::vector<int> points, lines, circles;
+    std::vector<int> points, lines, circles, splines;
     bool only(size_t p, size_t l, size_t c) const {
-      return points.size() == p && lines.size() == l && circles.size() == c;
+      return points.size() == p && lines.size() == l && circles.size() == c && splines.empty();
     }
   };
 
@@ -83,6 +84,7 @@ private:
   void addRectangle(const Pick& a, const Pick& b);
   void addPolygon(const Pick& center, const Pick& corner);
   void addSlot(const Pick& c1, const Pick& c2, const Pick& side);
+  void finishSpline(bool closed); // makes the spline through the clicks so far
   void remember(); // snapshot for undo, before a change
   void forget();   // drop that snapshot again (the change was refused)
   // Runs an edit as one undo step; restores the sketch if it fails or cannot be solved.

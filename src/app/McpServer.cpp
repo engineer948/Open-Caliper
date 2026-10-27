@@ -17,8 +17,9 @@ QJsonObject error(const QJsonValue& id, int code, const QString& message) {
 
 const char* kInstructions =
     "OpenCaliper is a parametric 3D CAD program for mechanical parts and 3D printing. A part is a timeline of "
-    "steps: sketches (2D curves on a plane), then extrudes/revolves that turn closed sketches into solid, then "
-    "fillets, chamfers, shells, holes, mirrors and patterns. Start with get_model. Build with create_sketch and "
+    "steps: sketches (2D curves, splines included, on a plane), then extrudes/revolves/lofts that turn closed "
+    "sketches into solid, then fillets, chamfers, shells, holes, mirrors and patterns. For curved, organic shapes "
+    "use splines and lofts through cross-sections instead of chains of arcs. Start with get_model. Build with create_sketch and "
     "add_feature; check the reply (errors, volume, size) and use screenshot to look at the result when the window is "
     "open. Use set_parameters for sizes the user may want to change later and refer to them in formulas. Every "
     "change is one undo step for the user.";

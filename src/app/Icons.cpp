@@ -91,6 +91,20 @@ void drawIcon(QPainter& p, const QString& n, const QColor& ink, const QColor& ac
     p.setPen(QPen(accent, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.drawLine(32, 36, 32, 8);
     p.drawPolyline(QPolygonF({QPointF(22, 18), QPointF(32, 8), QPointF(42, 18)}));
+  } else if (n == "spline") {
+    QPainterPath curve;
+    curve.moveTo(8, 48);
+    curve.cubicTo(20, 4, 36, 60, 56, 16);
+    p.drawPath(curve);
+    dot(8, 48);
+    dot(32, 33);
+    dot(56, 16);
+  } else if (n == "loft") { // a square section blending into a round one
+    p.drawRect(QRectF(12, 42, 40, 14));
+    p.drawEllipse(QRectF(20, 6, 24, 10));
+    p.setPen(QPen(accent, 4, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(12, 42), QPointF(20, 11));
+    p.drawLine(QPointF(52, 42), QPointF(44, 11));
   } else if (n == "revolve") {
     p.drawEllipse(QRectF(10, 20, 44, 24));
     p.setPen(QPen(accent, 4, Qt::DashLine, Qt::RoundCap));

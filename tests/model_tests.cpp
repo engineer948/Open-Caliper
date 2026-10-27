@@ -466,6 +466,135 @@ static void offsetLoop() {
   CHECK(s.solve() == sketch::SolveResult::Ok);
 }
 
+static std::unique_ptr<SketchFeature> square(double z, double half) {
+  auto f = rectangle(-half, -half, half, half);
+  f->plane = gp_Ax3(gp_Pnt(0, 0, z), gp::DZ(), gp::DX());
+  return f;
+}
+
+static void splines() {
+  // A closed spline through 8 points of a circle is very nearly that circle.
+  Document doc;
+  auto round = std::make_unique<SketchFeature>();
+  round->plane = gp_Ax3(gp::Origin(), gp::DZ(), gp::DX());
+  std::vector<int> pts;
+  for (int i = 0; i < 8; ++i)
+    pts.push_back(round->sketch.addPoint(10 * std::cos(i * std::numbers::pi / 4), 10 * std::sin(i * std::numbers::pi / 4)));
+  pts.push_back(pts.front());
+  round->sketch.addSpline(pts);
+  CHECK(round->sketch.valid());
+  CHECK(round->sketch.dof() == 16); // just its points
+  const int s = doc.add(std::move(round));
+  const int e = doc.add(extrude(s, 5));
+  CHECK(doc.error(e).empty());
+  CHECK(std::abs(volume(doc.body()) - std::numbers::pi * 100 * 5) < 0.01 * std::numbers::pi * 100 * 5);
+
+  // Smooth sides take a fillet all round the top.
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(doc.body(), TopAbs_EDGE, edges);
+  auto fillet = std::make_unique<FilletFeature>();
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    GProp_GProps p;
+    BRepGProp::LinearProperties(edges(i), p);
+    if (std::abs(p.CentreOfMass().Z() - 5) < 1e-6 && p.Mass() > 1) fillet->edges.push_back(i);
+  }
+  CHECK(fillet->edges.size() == 1);
+  fillet->radius = 1;
+  const int f = doc.add(std::move(fillet));
+  CHECK(doc.error(f).empty());
+  CHECK(volume(doc.body()) < std::numbers::pi * 100 * 5);
+
+  // An open spline closed off by lines; its ends are ordinary shared points.
+  Document doc2;
+  auto d = std::make_unique<SketchFeature>();
+  d->plane = gp_Ax3(gp::Origin(), gp::DZ(), gp::DX());
+  sketch::Sketch& k = d->sketch;
+  const int a = k.addPoint(0, 0), b = k.addPoint(20, 0), c = k.addPoint(20, 20), q = k.addPoint(0, 20);
+  k.addLine(a, b);
+  k.addSpline({b, k.addPoint(26, 10), c});
+  k.addLine(c, q);
+  k.addLine(q, a);
+  const int s2 = doc2.add(std::move(d));
+  doc2.add(extrude(s2, 1));
+  CHECK(!doc2.hasErrors());
+  CHECK(volume(doc2.body()) > 450 && volume(doc2.body()) < 560);
+}
+
+static void lofts() {
+  Document doc;
+  const int a = doc.add(square(0, 10)), b = doc.add(square(10, 5));
+  auto loft = std::make_unique<LoftFeature>();
+  loft->sketches = {a, b};
+  loft->ruled = true;
+  const int l = doc.add(std::move(loft));
+  CHECK(doc.error(l).empty());
+  CHECK(std::abs(volume(doc.body()) - 10.0 / 3 * (400 + 100 + 200)) < 1e-3); // frustum
+  CHECK(doc.isConsumed(a) && doc.isConsumed(b));
+
+  // Smooth through three sections, square -> circle -> square.
+  Document doc2;
+  const int s0 = doc2.add(square(0, 10));
+  auto circle = std::make_unique<SketchFeature>();
+  circle->plane = gp_Ax3(gp_Pnt(0, 0, 15), gp::DZ(), gp::DX());
+  circle->sketch.addCircle(circle->sketch.addPoint(0, 0), 6);
+  const int s1 = doc2.add(std::move(circle));
+  const int s2 = doc2.add(square(30, 8));
+  auto smooth = std::make_unique<LoftFeature>();
+  smooth->sketches = {s0, s1, s2};
+  const int l2 = doc2.add(std::move(smooth));
+  CHECK(doc2.error(l2).empty());
+  CHECK(volume(doc2.body()) > 30 * 100 && volume(doc2.body()) < 30 * 400);
+
+  // Deleting a section deletes the loft; deleting something before shifts it.
+  Document doc3;
+  doc3.add(rectangle(50, 0, 60, 10));
+  const int x = doc3.add(square(0, 10)), y = doc3.add(square(10, 5));
+  auto l3 = std::make_unique<LoftFeature>();
+  l3->sketches = {x, y};
+  doc3.add(std::move(l3));
+  Document doc4 = doc3;
+  CHECK(doc3.removeWithDependents(0) == 1);
+  CHECK(!doc3.hasErrors());
+  const auto* moved = doc3.as<LoftFeature>(2);
+  CHECK(moved && moved->sketches == std::vector<int>({0, 1}));
+  CHECK(doc4.removeWithDependents(2) == 2);
+  CHECK(doc4.size() == 2);
+
+  // Sections must be single loops.
+  Document doc5;
+  auto ring = rectangle(-10, -10, 10, 10);
+  ring->sketch.addCircle(ring->sketch.addPoint(0, 0), 3);
+  const int r0 = doc5.add(std::move(ring)), r1 = doc5.add(square(10, 5));
+  auto bad = std::make_unique<LoftFeature>();
+  bad->sketches = {r0, r1};
+  const int lb = doc5.add(std::move(bad));
+  CHECK(!doc5.error(lb).empty());
+}
+
+static void symmetricExtrude() {
+  Document doc;
+  auto e = extrude(doc.add(rectangle(0, 0, 10, 10)), 10);
+  e->symmetric = true;
+  doc.add(std::move(e));
+  CHECK(!doc.hasErrors());
+  CHECK(near(volume(doc.body()), 1000));
+  const MassProperties m = massProperties(doc.body());
+  CHECK(std::abs(m.center.Z()) < 1e-6 && std::abs(m.size.Z() - 10) < 1e-6);
+}
+
+static void filletErrorsNameTheEdge() {
+  Document doc;
+  doc.add(extrude(doc.add(rectangle(0, 0, 10, 10)), 10));
+  auto fillet = std::make_unique<FilletFeature>();
+  const int edge = verticalEdgeAt(doc.body(), 10, 10);
+  fillet->edges = {edge};
+  fillet->radius = 20;
+  const int f = doc.add(std::move(fillet));
+  CHECK(!doc.error(f).empty());
+  CHECK(doc.error(f).find("Fillet failed") != std::string::npos);
+  CHECK(near(volume(doc.body()), 1000)); // left as it was
+}
+
 int main() {
   std::setlocale(LC_ALL, "tr_TR.UTF-8"); // decimal comma: formulas must still read "0.75"
   offsetLoop();
@@ -488,6 +617,10 @@ int main() {
   patterns();
   constructionIsNotSolid();
   propertiesAndMeasure();
+  splines();
+  lofts();
+  symmetricExtrude();
+  filletErrorsNameTheEdge();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return EXIT_FAILURE;

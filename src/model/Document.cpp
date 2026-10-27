@@ -35,6 +35,8 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <TopoDS_Wire.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
@@ -54,6 +56,7 @@
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <type_traits>
 
 namespace model {
 namespace {
@@ -147,6 +150,49 @@ ShapeKey keyOf(const TopoDS_Shape& sub, const TopTools_IndexedDataMapOfShapeList
     else if (s.GetType() == GeomAbs_Cylinder) k.dir = s.Cylinder().Axis().Direction().XYZ(), k.size = s.Cylinder().Radius();
   }
   return k;
+}
+
+// Fillet, chamfer and shell can report success and still hand back a broken
+// solid (self-intersecting, inside out, a tiny sliver); refuse those.
+bool sound(const TopoDS_Shape& s) {
+  if (s.IsNull() || !BRepCheck_Analyzer(s).IsValid()) return false;
+  GProp_GProps g;
+  BRepGProp::VolumeProperties(s, g);
+  return g.Mass() > 0;
+}
+
+std::string indexList(std::vector<int> v) {
+  std::sort(v.begin(), v.end());
+  v.erase(std::unique(v.begin(), v.end()), v.end());
+  std::string out;
+  for (int i : v) out += (out.empty() ? "" : ", ") + std::to_string(i);
+  return out;
+}
+
+// Rounds or bevels `edges` of `body`. On failure the message says why and,
+// for fillets, which edges (numbered as in `body`) could not be done.
+template <class Algo>
+TopoDS_Shape roundEdges(const TopoDS_Shape& body, const std::vector<TopoDS_Shape>& edges, double size,
+                        const std::string& what) {
+  Algo algo(body);
+  for (const TopoDS_Shape& e : edges) algo.Add(size, TopoDS::Edge(e));
+  try {
+    algo.Build();
+  } catch (const Standard_Failure&) {
+  }
+  if (algo.IsDone() && sound(algo.Shape())) return algo.Shape();
+  if (algo.IsDone()) fail(what + " gave a broken solid; try a smaller size or fewer edges.");
+  std::vector<int> faulty;
+  if constexpr (std::is_same_v<Algo, BRepFilletAPI_MakeFillet>)
+    for (int c = 1; c <= algo.NbFaultyContours(); ++c) {
+      const int ic = algo.FaultyContour(c);
+      for (int k = 1; k <= algo.NbEdges(ic); ++k) faulty.push_back(edgeIndex(body, algo.Edge(ic, k)));
+    }
+  std::erase(faulty, 0);
+  std::string error = what + " failed";
+  if (!faulty.empty()) error += " at edge" + std::string(faulty.size() > 1 ? "s " : " ") + indexList(faulty);
+  fail(error + ": the " + (std::is_same_v<Algo, BRepFilletAPI_MakeFillet> ? "radius" : "distance") +
+       " may be too large there, or the faces next to the edge do not meet smoothly enough.");
 }
 
 bool parallel(const gp_XYZ& a, const gp_XYZ& b, bool oriented) {
@@ -370,12 +416,43 @@ TopoDS_Shape SketchFeature::profile() const {
 TopoDS_Shape ExtrudeFeature::tool(const Document& doc) const {
   const SketchFeature& s = inputSketch(doc, sketch);
   if (std::abs(distance) < 1e-9) fail("The extrude distance is zero.");
-  BRepPrimAPI_MakePrism prism(s.profile(), gp_Vec(s.plane.Direction()) * distance);
+  const gp_Vec along = gp_Vec(s.plane.Direction()) * distance;
+  TopoDS_Shape profile = s.profile();
+  if (symmetric) {
+    gp_Trsf half;
+    half.SetTranslation(along * -0.5);
+    profile = BRepBuilderAPI_Transform(profile, half, true).Shape();
+  }
+  BRepPrimAPI_MakePrism prism(profile, along);
   if (!prism.IsDone()) fail("Extrude failed.");
   return prism.Shape();
 }
 
 TopoDS_Shape ExtrudeFeature::build(const Document& doc, const TopoDS_Shape& body) const {
+  return combine(body, tool(doc), op);
+}
+
+TopoDS_Shape LoftFeature::tool(const Document& doc) const {
+  if (sketches.size() < 2) fail("A loft needs at least 2 sketches.");
+  BRepOffsetAPI_ThruSections loft(true, ruled);
+  for (int i : sketches) {
+    const SketchFeature& s = inputSketch(doc, i);
+    const std::string which = "Loft section " + std::to_string(i + 1);
+    std::vector<TopoDS_Face> faces;
+    for (TopExp_Explorer it(s.profile(), TopAbs_FACE); it.More(); it.Next()) faces.push_back(TopoDS::Face(it.Current()));
+    if (faces.size() != 1) fail(which + ": each sketch must have exactly one closed loop.");
+    int wires = 0;
+    for (TopExp_Explorer it(faces[0], TopAbs_WIRE); it.More(); it.Next()) ++wires;
+    if (wires != 1) fail(which + ": a loft section cannot have holes.");
+    loft.AddWire(BRepTools::OuterWire(faces[0]));
+  }
+  loft.CheckCompatibility(true);
+  loft.Build();
+  if (!loft.IsDone()) fail("Loft failed (do two sections lie in the same place, or cross each other?).");
+  return loft.Shape();
+}
+
+TopoDS_Shape LoftFeature::build(const Document& doc, const TopoDS_Shape& body) const {
   return combine(body, tool(doc), op);
 }
 
@@ -402,6 +479,7 @@ TopoDS_Shape ShellFeature::build(const Document&, const TopoDS_Shape& body) cons
   shell.MakeThickSolidByJoin(body, open, -thickness, 1e-3); // negative: walls grow inwards
   shell.Build();
   if (!shell.IsDone()) fail("Shell failed (wall too thick for this shape?).");
+  if (!sound(shell.Shape())) fail("Shell gave a broken solid; try a thinner wall.");
   return shell.Shape();
 }
 
@@ -413,7 +491,8 @@ TopoDS_Shape PatternFeature::build(const Document& doc, const TopoDS_Shape& body
   if (const auto* e = doc.as<ExtrudeFeature>(size_t(source))) original = e->tool(doc), op = e->op;
   else if (const auto* r = doc.as<RevolveFeature>(size_t(source))) original = r->tool(doc), op = r->op;
   else if (const auto* h = doc.as<HoleFeature>(size_t(source))) original = h->tool(doc, body), op = Operation::Cut;
-  else fail("A pattern repeats an extrude, a revolve or a hole.");
+  else if (const auto* l = doc.as<LoftFeature>(size_t(source))) original = l->tool(doc), op = l->op;
+  else fail("A pattern repeats an extrude, a revolve, a loft or a hole.");
 
   const gp_Dir dir = axis == Axis::X ? gp::DX() : axis == Axis::Y ? gp::DY() : gp::DZ();
   // A full circle has no copy on top of the original: 360/count; an arc ends on its last copy.
@@ -523,20 +602,12 @@ TopoDS_Shape MirrorFeature::build(const Document&, const TopoDS_Shape& body) con
 
 TopoDS_Shape FilletFeature::build(const Document&, const TopoDS_Shape& body) const {
   if (radius <= 0) fail("The fillet radius must be positive.");
-  BRepFilletAPI_MakeFillet fillet(body);
-  for (const TopoDS_Shape& e : bodyShapes(body, edges, keys, TopAbs_EDGE)) fillet.Add(radius, TopoDS::Edge(e));
-  fillet.Build();
-  if (!fillet.IsDone()) fail("Fillet failed (radius too large for the selected edges?).");
-  return fillet.Shape();
+  return roundEdges<BRepFilletAPI_MakeFillet>(body, bodyShapes(body, edges, keys, TopAbs_EDGE), radius, "Fillet");
 }
 
 TopoDS_Shape ChamferFeature::build(const Document&, const TopoDS_Shape& body) const {
   if (distance <= 0) fail("The chamfer distance must be positive.");
-  BRepFilletAPI_MakeChamfer chamfer(body);
-  for (const TopoDS_Shape& e : bodyShapes(body, edges, keys, TopAbs_EDGE)) chamfer.Add(distance, TopoDS::Edge(e));
-  chamfer.Build();
-  if (!chamfer.IsDone()) fail("Chamfer failed (distance too large for the selected edges?).");
-  return chamfer.Shape();
+  return roundEdges<BRepFilletAPI_MakeChamfer>(body, bodyShapes(body, edges, keys, TopAbs_EDGE), distance, "Chamfer");
 }
 
 TopoDS_Shape ImportFeature::build(const Document&, const TopoDS_Shape& body) const {
@@ -565,11 +636,15 @@ void Document::replace(size_t i, std::unique_ptr<Feature> feature) {
 int Document::removeWithDependents(size_t i) {
   std::set<int> doomed{int(i)};
   for (size_t k = i + 1; k < m_history.size(); ++k)
-    if (doomed.count(m_history[k]->sketchInput())) doomed.insert(int(k));
+    for (int in : m_history[k]->inputs())
+      if (doomed.count(in)) doomed.insert(int(k));
   for (auto it = doomed.rbegin(); it != doomed.rend(); ++it) m_history.erase(m_history.begin() + *it);
-  for (auto& f : m_history) // shift sketch references past the removed entries
-    if (int s = f->sketchInput(); s >= 0)
-      f->setSketchInput(s - int(std::count_if(doomed.begin(), doomed.end(), [s](int d) { return d < s; })));
+  for (auto& f : m_history) { // shift references past the removed entries
+    std::vector<int> in = f->inputs();
+    if (in.empty()) continue;
+    for (int& s : in) s -= int(std::count_if(doomed.begin(), doomed.end(), [s](int d) { return d < s; }));
+    f->setInputs(in);
+  }
   regenerate(i);
   return int(doomed.size());
 }
@@ -646,7 +721,8 @@ void Document::regenerate(size_t from) {
 
 bool Document::isConsumed(size_t sketchIndex) const {
   for (size_t i = sketchIndex + 1; i < m_history.size(); ++i)
-    if (m_history[i]->sketchInput() == int(sketchIndex)) return true;
+    for (int in : m_history[i]->inputs())
+      if (in == int(sketchIndex)) return true;
   return false;
 }
 

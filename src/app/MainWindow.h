@@ -65,6 +65,7 @@ private:
   // features
   void extrude(int editIndex = -1);
   void revolve(int editIndex = -1);
+  void loft(int editIndex = -1);
   void filletOrChamfer(bool fillet, int editIndex = -1);
   void shell(int editIndex = -1);
   void pattern(int editIndex = -1);

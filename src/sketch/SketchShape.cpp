@@ -5,6 +5,12 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <Geom2dAPI_Interpolate.hxx>
+#include <GeomAPI.hxx>
+#include <Geom_Curve.hxx>
+#include <TColgp_HArray1OfPnt2d.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Pln.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -51,9 +57,40 @@ TopoDS_Shape makeArc(const gp_Ax3& plane, double cu, double cv, double su, doubl
   return BRepBuilderAPI_MakeEdge(circleOn(plane, cu, cv, r), a1, a2).Edge();
 }
 
+Handle(Geom2d_BSplineCurve) interpolate(const std::vector<std::pair<double, double>>& points, bool closed) {
+  if (points.size() < (closed ? 3u : 2u)) return {};
+  for (size_t i = 1; i < points.size(); ++i) // the same point twice in a row has no direction
+    if (std::hypot(points[i].first - points[i - 1].first, points[i].second - points[i - 1].second) < kMinSize) return {};
+  Handle(TColgp_HArray1OfPnt2d) pts = new TColgp_HArray1OfPnt2d(1, int(points.size()));
+  for (int i = 0; i < int(points.size()); ++i) pts->SetValue(i + 1, gp_Pnt2d(points[i].first, points[i].second));
+  try {
+    Geom2dAPI_Interpolate interp(pts, closed, kMinSize);
+    interp.Perform();
+    if (!interp.IsDone()) return {};
+    return interp.Curve();
+  } catch (const Standard_Failure&) {
+    return {};
+  }
+}
+
+Handle(Geom2d_BSplineCurve) splineCurve(const Sketch& s, int entity) {
+  const Entity& e = s.entities[entity];
+  const bool closed = e.closedSpline();
+  std::vector<std::pair<double, double>> points;
+  for (size_t i = 0; i < e.pts.size() - (closed ? 1 : 0); ++i) points.emplace_back(s.x(e.pts[i]), s.y(e.pts[i]));
+  return interpolate(points, closed);
+}
+
+TopoDS_Shape makeSpline(const gp_Ax3& plane, const Handle(Geom2d_BSplineCurve)& curve) {
+  if (curve.IsNull()) return {};
+  return BRepBuilderAPI_MakeEdge(GeomAPI::To3d(curve, gp_Pln(plane))).Edge();
+}
+
 TopoDS_Shape makeEntity(const Sketch& s, const gp_Ax3& plane, int entity) {
   const Entity& e = s.entities[entity];
   switch (e.kind) {
+  case EntityKind::Spline:
+    return makeSpline(plane, splineCurve(s, entity));
   case EntityKind::Line:
     return makeSegment(plane, s.x(e.p[0]), s.y(e.p[0]), s.x(e.p[1]), s.y(e.p[1]));
   case EntityKind::Circle:
@@ -117,7 +154,7 @@ std::vector<int> offsetLoops(Sketch& s, const std::vector<int>& entities, double
             added.push_back(s.addArc(s.addPoint(centre.X(), centre.Y()), point(up ? a : b), point(up ? b : a)));
           }
         } else {
-          return {};
+          return {}; // splines have no offset in the sketch
         }
       }
     }

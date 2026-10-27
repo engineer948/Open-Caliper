@@ -1,6 +1,7 @@
 #include "app/ModelApi.h"
 #include "app/ProjectFile.h"
 #include "io/Exchange.h"
+#include "sketch/SketchShape.h"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -133,6 +134,12 @@ QJsonObject sketchInfo(const SketchFeature& f) {
       c["kind"] = "line";
       c["points"] = QJsonArray{e.p[0], e.p[1]};
       c["length"] = r4(s.length(int(i)));
+    } else if (e.kind == sketch::EntityKind::Spline) {
+      c["kind"] = "spline";
+      QJsonArray pts;
+      for (size_t k = 0; k < e.pts.size() - (e.closedSpline() ? 1 : 0); ++k) pts.append(e.pts[k]);
+      c["points"] = pts;
+      if (e.closedSpline()) c["closed"] = true;
     } else {
       c["kind"] = e.kind == sketch::EntityKind::Circle ? "circle" : "arc";
       c["points"] = e.kind == sketch::EntityKind::Circle ? QJsonArray{e.p[0]} : QJsonArray{e.p[0], e.p[1], e.p[2]};
@@ -360,6 +367,7 @@ public:
   QJsonObject addCurve(const QJsonObject& c) {
     const QString type = c["type"].toString();
     const int first = int(s.entities.size());
+    QString warning;
     if (type == "line") {
       const XY a = xyArg(c["from"], "line.from"), b = xyArg(c["to"], "line.to");
       line(a, b);
@@ -393,7 +401,36 @@ public:
       const double r = std::hypot(a.x - m.x, a.y - m.y), rb = std::hypot(b.x - m.x, b.y - m.y);
       if (r < 1e-9 || rb < 1e-9) fail("arc: start and end must not be at the center");
       const XY end{m.x + (b.x - m.x) * r / rb, m.y + (b.y - m.y) * r / rb}; // on the circle
+      if (std::abs(rb - r) > 1e-6)
+        warning = QString("end moved by %1 mm onto the circle through start, to [%2, %3]; it may no longer meet the "
+                          "next curve (arc3 passes through all three points)")
+                      .arg(r4(std::abs(rb - r))).arg(r4(end.x)).arg(r4(end.y));
       s.addArc(point(m.x, m.y), point(a.x, a.y), point(end.x, end.y));
+    } else if (type == "arc3") {
+      const XY a = xyArg(c["start"], "arc3.start"), m = xyArg(c["mid"], "arc3.mid"), b = xyArg(c["end"], "arc3.end");
+      // Centre: where the perpendicular bisectors of start-mid and mid-end meet.
+      const double d = 2 * (a.x * (m.y - b.y) + m.x * (b.y - a.y) + b.x * (a.y - m.y));
+      const double scale = std::max({std::hypot(m.x - a.x, m.y - a.y), std::hypot(b.x - m.x, b.y - m.y), 1e-9});
+      if (std::abs(d) < 1e-9 * scale * scale) fail("arc3: the three points lie on one line (use a line)");
+      const double a2 = a.x * a.x + a.y * a.y, m2 = m.x * m.x + m.y * m.y, b2 = b.x * b.x + b.y * b.y;
+      const XY o{(a2 * (m.y - b.y) + m2 * (b.y - a.y) + b2 * (a.y - m.y)) / d,
+                 (a2 * (b.x - m.x) + m2 * (a.x - b.x) + b2 * (m.x - a.x)) / d};
+      const bool ccw = d > 0; // start -> mid -> end turns left
+      const int pa = point(a.x, a.y), pb = point(b.x, b.y);
+      s.addArc(point(o.x, o.y), ccw ? pa : pb, ccw ? pb : pa);
+    } else if (type == "spline") {
+      std::vector<int> pts;
+      for (const QJsonValue& v : c["points"].toArray()) {
+        const XY p = xyArg(v, "spline.points[]");
+        const int q = point(p.x, p.y);
+        if (!pts.empty() && pts.back() == q) fail("spline: the same point twice in a row");
+        pts.push_back(q);
+      }
+      const bool closed = c["closed"].toBool();
+      if (closed && pts.size() > 1 && pts.back() == pts.front()) pts.pop_back(); // closing point given twice
+      if (pts.size() < (closed ? 3u : 2u)) fail(closed ? "spline: a closed one needs at least 3 points" : "spline: give at least 2 points");
+      if (closed) pts.push_back(pts.front());
+      if (sketch::splineCurve(s, s.addSpline(pts)).IsNull()) fail("spline: no smooth curve fits these points");
     } else if (type == "polygon") {
       const XY m = xyArg(c["center"], "polygon.center");
       const double r = size(c, "radius").value;
@@ -418,7 +455,7 @@ public:
       s.addLine(pb, pa);
       s.addArc(point(a.x, a.y), pa, pd);
     } else {
-      fail(QString("Unknown curve type '%1' (line, rect, circle, arc, polygon, slot).").arg(type));
+      fail(QString("Unknown curve type '%1' (line, rect, circle, arc, arc3, spline, polygon, slot).").arg(type));
     }
     const bool construction = c["construction"].toBool();
     QJsonArray made;
@@ -426,7 +463,9 @@ public:
       s.entities[i].construction = construction;
       made.append(i);
     }
-    return {{"type", type}, {"curves", made}};
+    QJsonObject o{{"type", type}, {"curves", made}};
+    if (!warning.isEmpty()) o["warning"] = warning;
+    return o;
   }
 
   void addConstraint(const QJsonObject& c) {
@@ -492,6 +531,7 @@ private:
 
   double curveDistance(int e, XY p) const {
     const sketch::Entity& en = s.entities[e];
+    if (en.kind == sketch::EntityKind::Spline) return std::numeric_limits<double>::max(); // takes no constraints
     if (en.kind == sketch::EntityKind::Line) {
       const double ax = s.x(en.p[0]), ay = s.y(en.p[0]), bx = s.x(en.p[1]), by = s.y(en.p[1]);
       const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
@@ -552,6 +592,7 @@ QJsonObject createSketch(Host& host, const QJsonObject& args) {
 
 std::unique_ptr<Feature> newFeature(const QString& type) {
   if (type == "extrude") return std::make_unique<ExtrudeFeature>();
+  if (type == "loft") return std::make_unique<LoftFeature>();
   if (type == "revolve") return std::make_unique<RevolveFeature>();
   if (type == "fillet") return std::make_unique<FilletFeature>();
   if (type == "chamfer") return std::make_unique<ChamferFeature>();
@@ -560,7 +601,7 @@ std::unique_ptr<Feature> newFeature(const QString& type) {
   if (type == "mirror") return std::make_unique<MirrorFeature>();
   if (type == "pattern") return std::make_unique<PatternFeature>();
   if (type == "sketch") fail("Use create_sketch for sketches.");
-  fail(QString("Unknown step type '%1' (extrude, revolve, fillet, chamfer, shell, hole, mirror, pattern).").arg(type));
+  fail(QString("Unknown step type '%1' (extrude, revolve, loft, fillet, chamfer, shell, hole, mirror, pattern).").arg(type));
 }
 
 std::vector<ShapeKey> keysOf(const TopoDS_Shape& body, const std::vector<int>& indices, TopAbs_ShapeEnum kind) {
@@ -738,12 +779,15 @@ QJsonArray tools() {
                    "Curves (sketch coordinates): {\"type\":\"line\",\"from\":[x,y],\"to\":[x,y]}, "
                    "{\"type\":\"rect\",\"corner\":[x,y] or \"center\":[x,y],\"width\",\"height\"}, "
                    "{\"type\":\"circle\",\"center\":[x,y],\"radius\" or \"diameter\"}, "
-                   "{\"type\":\"arc\",\"center\",\"start\",\"end\"} (counter-clockwise), "
+                   "{\"type\":\"arc\",\"center\",\"start\",\"end\"} (counter-clockwise; end is moved onto the "
+                   "circle), {\"type\":\"arc3\",\"start\",\"mid\",\"end\"} (through all three), "
+                   "{\"type\":\"spline\",\"points\":[[x,y],...],\"closed\":false} (smooth curve through the points; "
+                   "closed: true makes a smooth loop), "
                    "{\"type\":\"polygon\",\"center\",\"radius\",\"sides\",\"rotation\"}, "
                    "{\"type\":\"slot\",\"from\",\"to\",\"width\"}; add \"construction\": true for helper geometry. "
                    "Points at the same coordinates are joined, so lines that meet form closed shapes; loops inside "
                    "loops become holes. A rect makes 4 lines (bottom, right, top, left), a polygon one line per side, "
-                   "a slot 2 lines and 2 arcs. A rect width/height or circle radius/diameter given as a string (\"w\", "
+                   "a slot 2 lines and 2 arcs. Splines take no constraints. A rect width/height or circle radius/diameter given as a string (\"w\", "
                    "\"30\") also adds a dimension that parameters can drive. Optional constraints: {\"kind\": "
                    "coincident|horizontal|vertical|parallel|perpendicular|equal|tangent|point-on-line|point-on-circle|"
                    "distance|length|radius|symmetric, \"a\", \"b\", \"c\", \"value\"}; references are curve or point "
@@ -759,13 +803,15 @@ QJsonArray tools() {
           {"name", "add_feature"},
           {"description",
            QString("Add a step after the last one. feature = {\"type\": ..., fields}; fields left out keep their "
-                   "defaults. extrude {sketch, distance (negative = other way), op: join|cut|intersect}; "
-                   "revolve {sketch, axis: sketch-x|sketch-y, angle, op}; fillet {edges: [..], radius}; "
+                   "defaults. extrude {sketch, distance (negative = other way), symmetric (half to each side), "
+                   "op: join|cut|intersect}; revolve {sketch, axis: sketch-x|sketch-y, angle, op}; "
+                   "loft {sketches: [cross-section sketches in order, each one closed loop without holes], ruled "
+                   "(straight between sections), op}; fillet {edges: [..], radius}; "
                    "chamfer {edges, distance}; shell {faces: open faces, thickness}; "
                    "hole {sketch (its circles are the hole centers; drilled against the sketch normal unless flip), "
                    "kind: simple|counterbore|countersink, diameter, depth (0 = through), bore-diameter, bore-depth, "
                    "sink-diameter, sink-angle, flip}; mirror {plane: xy|xz|yz|face, face}; "
-                   "pattern {source: extrude/revolve/hole step, kind: linear|circular, axis: x|y|z, count (total, "
+                   "pattern {source: extrude/revolve/loft/hole step, kind: linear|circular, axis: x|y|z, count (total, "
                    "original included), spacing, angle}. Edges and faces are 1-based indices from find_edges / "
                    "find_faces. ") +
                kConventions},
@@ -800,8 +846,13 @@ QJsonArray tools() {
                                   {"limit", prop("integer", "at most this many (default 100)")}})}},
       QJsonObject{
           {"name", "screenshot"},
-          {"description", "Picture of the part in the OpenCaliper window (only when the window is open)."},
-          {"inputSchema", schema({{"view", prop("string", "iso (default), front, back, top, bottom, left, right or current")}})}},
+          {"description", "Pictures of the part in the OpenCaliper window (only when the window is open), fitted to "
+                          "the part, without dimension labels unless asked."},
+          {"inputSchema",
+           schema({{"view", prop("string", "iso (default), front, back, top, bottom, left, right or current")},
+                   {"views", QJsonObject{{"type", "array"}, {"items", QJsonObject{{"type", "string"}}},
+                                         {"description", "several at once, e.g. [\"iso\", \"front\", \"top\"]"}}},
+                   {"dimensions", prop("boolean", "show the dimension labels (default false)")}})}},
       QJsonObject{
           {"name", "undo"},
           {"description", "Undo the last change (the user can also press Ctrl+Z in OpenCaliper)."},
@@ -847,12 +898,18 @@ QJsonObject callTool(Host& host, const QString& name, const QJsonObject& args) {
     else if (name == "open_project") r = ok(host.openProject(args["path"].toString()), "Opened");
     else if (name == "save_project") r = ok(host.saveProject(args["path"].toString()), "Saved");
     else if (name == "screenshot") {
-      QByteArray png;
-      if (const QString err = host.screenshot(args["view"].toString("iso"), png); !err.isEmpty()) fail(err);
-      return {{"content", QJsonArray{QJsonObject{{"type", "image"},
-                                                 {"data", QString::fromLatin1(png.toBase64())},
-                                                 {"mimeType", "image/png"}}}},
-              {"isError", false}};
+      QStringList views;
+      for (const QJsonValue& v : args["views"].toArray()) views << v.toString();
+      if (views.isEmpty()) views << args["view"].toString("iso");
+      if (views.size() > 6) fail("views: at most 6 at once");
+      QJsonArray content;
+      for (const QString& view : views) {
+        QByteArray png;
+        if (const QString err = host.screenshot(view, args["dimensions"].toBool(), png); !err.isEmpty()) fail(err);
+        if (views.size() > 1) content.append(QJsonObject{{"type", "text"}, {"text", view}});
+        content.append(QJsonObject{{"type", "image"}, {"data", QString::fromLatin1(png.toBase64())}, {"mimeType", "image/png"}});
+      }
+      return {{"content", content}, {"isError", false}};
     } else {
       return textResult(QString("Unknown tool '%1'.").arg(name), true);
     }
@@ -929,7 +986,7 @@ QString FileHost::saveProject(const QString& path) {
   return {};
 }
 
-QString FileHost::screenshot(const QString&, QByteArray&) {
+QString FileHost::screenshot(const QString&, bool, QByteArray&) {
   return "Pictures need the OpenCaliper window: ask the user to open OpenCaliper and turn on "
          "Tools > Claude (MCP). Changes made without the window are not in it; save them with save_project first.";
 }

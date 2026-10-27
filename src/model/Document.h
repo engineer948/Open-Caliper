@@ -33,6 +33,13 @@ public:
   // deletes this one too.
   virtual int sketchInput() const { return -1; }
   virtual void setSketchInput(int) {}
+  // Every feature this one is built from; one for most, several for a loft.
+  virtual std::vector<int> inputs() const {
+    return sketchInput() >= 0 ? std::vector<int>{sketchInput()} : std::vector<int>{};
+  }
+  virtual void setInputs(const std::vector<int>& in) {
+    if (!in.empty()) setSketchInput(in[0]);
+  }
 
   // Sizes given as parameter expressions ("width / 2"), by field name; the
   // document evaluates them into the fields before each build.
@@ -80,6 +87,7 @@ class ExtrudeFeature : public FeatureOf<ExtrudeFeature> {
 public:
   int sketch = -1;
   double distance = 10; // along the sketch normal; negative goes the other way
+  bool symmetric = false; // half of `distance` to each side of the sketch
   Operation op = Operation::Join;
 
   std::string name() const override { return "Extrude"; }
@@ -104,6 +112,22 @@ public:
   int sketchInput() const override { return sketch; }
   void setSketchInput(int s) override { sketch = s; }
   bool setValue(const std::string& f, double v) override { return f == "angle" && (angle = v, true); }
+};
+
+// A solid through the closed profiles of several sketches, in order (bottle,
+// handle, car body): each sketch is one cross-section with a single loop.
+class LoftFeature : public FeatureOf<LoftFeature> {
+public:
+  std::vector<int> sketches;
+  bool ruled = false; // straight faces between sections instead of a smooth skin
+  Operation op = Operation::Join;
+
+  std::string name() const override { return "Loft"; }
+  TopoDS_Shape build(const Document& doc, const TopoDS_Shape& body) const override;
+  TopoDS_Shape tool(const Document& doc) const;
+  int sketchInput() const override { return sketches.empty() ? -1 : sketches[0]; }
+  std::vector<int> inputs() const override { return sketches; }
+  void setInputs(const std::vector<int>& in) override { sketches = in; }
 };
 
 // Edges are stored by their index in the body's edge map (TopExp::MapShapes)
