@@ -1,7 +1,9 @@
-// Layout of OpenCaliper-windows-x64.exe: the launcher (launcher.cpp), then the
-// payload written by pack.cpp, then a fixed-size trailer.
+// OpenCaliper-windows-x64.exe is the launcher (launcher.cpp) with the program
+// folder stored in it as an RCDATA resource named "PAYLOAD" (added by pack.cpp).
+// A resource, not data appended to the exe: antivirus heuristics treat data
+// after the end of an exe as a sign of a packed dropper.
 //
-// Payload, one record per file:
+// The resource: the records, then a fixed-size trailer. One record per file:
 //   u32 pathBytes, u8 method, u64 rawSize, u64 storedSize,
 //   path (UTF-8, '/' separators, relative), storedSize bytes of data
 // method 0 = stored as is, 1 = LZMS (Windows Compression API, buffer mode).
@@ -14,6 +16,8 @@
 namespace ocpack {
 
 constexpr char kMagic[8] = {'O', 'C', 'A', 'L', 'P', 'A', 'K', '1'};
+constexpr wchar_t kResourceName[] = L"PAYLOAD";
+constexpr uint16_t kRcData = 10; // RT_RCDATA
 
 enum Method : uint8_t { Stored = 0, Lzms = 1 };
 
@@ -26,9 +30,9 @@ struct RecordHeader {
 };
 
 struct Trailer {
-  uint64_t payloadSize;
+  uint64_t payloadSize; // the records, without the trailer
   uint64_t fileCount;
-  uint64_t hash; // fnv1a over the payload: detects damaged downloads, names the unpack folder
+  uint64_t hash; // fnv1a over the records: detects damaged downloads, names the unpack folder
   char magic[8];
 };
 #pragma pack(pop)

@@ -1,7 +1,9 @@
 # Builds OpenCaliper for Linux (AppImage + .flatpak) and Windows (.zip + one-file .exe).
 # Every push/PR: downloadable from the workflow run's "Artifacts".
-# Pushing a tag like v0.1.0: also published as a GitHub Release, so the
-# README's .../releases/latest/download/... links point to the new files.
+# Artifacts carry the version in their names (OpenCaliper-0.4.2-x86_64.AppImage).
+# Pushing a tag like v0.1.0: also published as a GitHub Release under fixed
+# names, so the README's .../releases/latest/download/... links point to the
+# new files.
 name: Build
 
 on:
@@ -17,17 +19,23 @@ jobs:
     container: ubuntu:22.04 # old glibc = runs on more distributions
     steps:
       - uses: actions/checkout@v4
+      # Version from CMakeLists.txt, for the artifact names (e.g. OpenCaliper-0.4.2-windows-x64.exe)
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(sed -n 's/^project(OpenCaliper VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
       - name: Cache OpenCASCADE build
         uses: actions/cache@v4
         with:
           path: packaging/appimage/.cache
           key: appimage-occt-V7_9_3
       - name: Build AppImage
-        run: SRC="$GITHUB_WORKSPACE" bash packaging/appimage/inside-container.sh
+        run: |
+          SRC="$GITHUB_WORKSPACE" bash packaging/appimage/inside-container.sh
+          mv dist/OpenCaliper-x86_64.AppImage "dist/OpenCaliper-$VERSION-x86_64.AppImage"
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenCaliper-x86_64.AppImage
-          path: dist/OpenCaliper-x86_64.AppImage
+          name: OpenCaliper-${{ env.VERSION }}-x86_64.AppImage
+          path: dist/OpenCaliper-${{ env.VERSION }}-x86_64.AppImage
 
   flatpak:
     runs-on: ubuntu-latest
@@ -36,9 +44,13 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v4
+      # Version from CMakeLists.txt, for the artifact names (e.g. OpenCaliper-0.4.2-windows-x64.exe)
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(sed -n 's/^project(OpenCaliper VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: OpenCaliper.flatpak
+          bundle: OpenCaliper-${{ env.VERSION }}.flatpak
           manifest-path: packaging/flatpak/io.github.open_workshop_tools.OpenCaliper.yml
           cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/*.yml') }}
 
@@ -51,6 +63,10 @@ jobs:
       VCPKG_TRIPLET: x64-windows-release
     steps:
       - uses: actions/checkout@v4
+      # Version from CMakeLists.txt, for the artifact names (e.g. OpenCaliper-0.4.2-windows-x64.exe)
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(sed -n 's/^project(OpenCaliper VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: jurplel/install-qt-action@v4
         with:
@@ -135,14 +151,19 @@ jobs:
           $p = Start-Process -FilePath .\OpenCaliper-windows-x64.exe -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "second start exited with $($p.ExitCode)" }
           Write-Host "OK: $($want.Count) files, exe $([math]::Round((Get-Item OpenCaliper-windows-x64.exe).Length / 1MB)) MB"
+      - name: Add the version to the file names
+        shell: pwsh
+        run: |
+          Rename-Item OpenCaliper-windows-x64.zip "OpenCaliper-$env:VERSION-windows-x64.zip"
+          Rename-Item OpenCaliper-windows-x64.exe "OpenCaliper-$env:VERSION-windows-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenCaliper-windows-x64.zip
-          path: OpenCaliper-windows-x64.zip
+          name: OpenCaliper-${{ env.VERSION }}-windows-x64.zip
+          path: OpenCaliper-${{ env.VERSION }}-windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenCaliper-windows-x64.exe
-          path: OpenCaliper-windows-x64.exe
+          name: OpenCaliper-${{ env.VERSION }}-windows-x64.exe
+          path: OpenCaliper-${{ env.VERSION }}-windows-x64.exe
 
   # Publishes whatever was built: if one platform fails, the others are released
   # anyway. Fix it, then move the tag (see README) and the missing file is added
@@ -158,14 +179,23 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # Release files keep fixed names: the README links to .../latest/download/<name>.
+      - name: Fixed file names
+        run: |
+          mkdir release
+          for f in artifacts/*/*; do
+            case "$f" in
+              *.AppImage) mv "$f" release/OpenCaliper-x86_64.AppImage ;;
+              *.flatpak) mv "$f" release/OpenCaliper.flatpak ;;
+              *-windows-x64.zip) mv "$f" release/OpenCaliper-windows-x64.zip ;;
+              *-windows-x64.exe) mv "$f" release/OpenCaliper-windows-x64.exe ;;
+            esac
+          done
+          ls -l release
       - uses: softprops/action-gh-release@v2
         with:
           name: OpenCaliper ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           overwrite_files: true
           fail_on_unmatched_files: false
-          files: |
-            artifacts/**/OpenCaliper-x86_64.AppImage
-            artifacts/**/OpenCaliper.flatpak
-            artifacts/**/OpenCaliper-windows-x64.zip
-            artifacts/**/OpenCaliper-windows-x64.exe
+          files: release/*

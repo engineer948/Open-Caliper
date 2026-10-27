@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenCaliper VERSION 0.4.1 LANGUAGES CXX)
+project(OpenCaliper VERSION 0.4.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +78,7 @@ if(WIN32)
   # program folder that opencaliper_pack appends to it. See packaging/windows.
   add_executable(opencaliper_launcher WIN32
     packaging/windows/launcher.cpp
+    packaging/windows/launcher.manifest
     ${CMAKE_CURRENT_BINARY_DIR}/opencaliper.rc
   )
   target_compile_definitions(opencaliper_launcher PRIVATE OPENCALIPER_VERSION="${PROJECT_VERSION}")

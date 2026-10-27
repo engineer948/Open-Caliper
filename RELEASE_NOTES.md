@@ -1,3 +1,16 @@
+## OpenCaliper 0.4.2
+
+### Fixed
+
+**Windows**
+- A few antivirus programs flagged the one-file download
+  (`OpenCaliper-windows-x64.exe`) as suspicious. These were guesses by
+  machine-learning scanners, not a real detection: the exe only unpacks
+  OpenCaliper to `%LOCALAPPDATA%` and starts it, and its source is in
+  `packaging/windows/`. It is now built the way installers usually are (the
+  program stored as a Windows resource, with a proper application manifest),
+  which such scanners are less likely to misread. The zip is unchanged.
+
 ## OpenCaliper 0.4.1
 
 ### What's new

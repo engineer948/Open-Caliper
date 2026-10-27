@@ -1,7 +1,7 @@
 // Build tool for the one-file Windows download (run by CI, not shipped):
 //   opencaliper_pack <folder> <launcher.exe> <out.exe>
-// Writes launcher.exe followed by every file under <folder>, compressed one by
-// one, and a trailer (see PackFormat.h).
+// Copies launcher.exe to out.exe and stores every file under <folder>,
+// compressed one by one, in it as a resource (see PackFormat.h).
 #include "PackFormat.h"
 
 #include <windows.h>
@@ -40,16 +40,13 @@ int main(int argc, char** argv) {
     if (!CreateCompressor(COMPRESS_ALGORITHM_LZMS, nullptr, &comp))
       throw std::runtime_error("CreateCompressor failed");
 
-    std::ofstream out(argv[3], std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error(std::string("cannot write ") + argv[3]);
-    const std::vector<char> launcher = readAll(argv[2]);
-    out.write(launcher.data(), std::streamsize(launcher.size()));
-
+    std::vector<char> payload;
     ocpack::Trailer t{};
     t.hash = ocpack::kFnvBasis;
     uint64_t rawTotal = 0;
     auto put = [&](const void* data, size_t n) {
-      out.write(static_cast<const char*>(data), std::streamsize(n));
+      const auto* p = static_cast<const char*>(data);
+      payload.insert(payload.end(), p, p + n);
       t.hash = ocpack::fnv1a(t.hash, data, n);
       t.payloadSize += n;
     };
@@ -80,9 +77,19 @@ int main(int argc, char** argv) {
     CloseCompressor(comp);
 
     std::memcpy(t.magic, ocpack::kMagic, sizeof t.magic);
-    out.write(reinterpret_cast<const char*>(&t), sizeof t);
-    out.close();
-    if (!out) throw std::runtime_error("write failed");
+    const auto* tp = reinterpret_cast<const char*>(&t);
+    payload.insert(payload.end(), tp, tp + sizeof t);
+
+    const fs::path out = argv[3];
+    fs::copy_file(argv[2], out, fs::copy_options::overwrite_existing);
+    HANDLE res = BeginUpdateResourceW(out.c_str(), FALSE);
+    if (!res) throw std::runtime_error("BeginUpdateResource failed");
+    if (!UpdateResourceW(res, MAKEINTRESOURCEW(ocpack::kRcData), ocpack::kResourceName,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), payload.data(), DWORD(payload.size()))) {
+      EndUpdateResourceW(res, TRUE);
+      throw std::runtime_error("UpdateResource failed");
+    }
+    if (!EndUpdateResourceW(res, FALSE)) throw std::runtime_error("EndUpdateResource failed");
     std::cout << t.fileCount << " files, " << rawTotal / 1048576 << " MB -> "
               << t.payloadSize / 1048576 << " MB\n";
     return 0;

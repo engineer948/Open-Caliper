@@ -37,6 +37,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.2" date="2026-10-27">
+      <description>
+        <p>Windows: the one-file download is built in a way that antivirus programs are less likely to mistake for malware.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-10-27">
       <description>
         <p>Windows: a one-file download that starts with a double-click, and a program icon.</p>
