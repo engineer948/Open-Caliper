@@ -1,0 +1,29 @@
+// Icon and file details (Explorer > Properties > Details) for OpenCaliper.exe
+// and the one-file launcher. Filled in by CMake.
+#include <winver.h>
+
+1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/packaging/windows/opencaliper.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Open Workshop Tools"
+      VALUE "FileDescription", "OpenCaliper"
+      VALUE "FileVersion", "@PROJECT_VERSION@"
+      VALUE "LegalCopyright", "MIT License"
+      VALUE "ProductName", "OpenCaliper"
+      VALUE "ProductVersion", "@PROJECT_VERSION@"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

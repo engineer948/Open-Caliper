@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenCaliper VERSION 0.4.0 LANGUAGES CXX)
+project(OpenCaliper VERSION 0.4.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +68,25 @@ qt_add_resources(opencaliper licenses
 if(WIN32)
   target_link_libraries(opencaliper PRIVATE opengl32)
   set_target_properties(opencaliper PROPERTIES WIN32_EXECUTABLE ON)
+
+  # Icon and version details for both exes.
+  enable_language(RC)
+  configure_file(packaging/windows/opencaliper.rc.in opencaliper.rc @ONLY)
+  target_sources(opencaliper PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/opencaliper.rc)
+
+  # One-file download (OpenCaliper-windows-x64.exe): the launcher unpacks the
+  # program folder that opencaliper_pack appends to it. See packaging/windows.
+  add_executable(opencaliper_launcher WIN32
+    packaging/windows/launcher.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/opencaliper.rc
+  )
+  target_compile_definitions(opencaliper_launcher PRIVATE OPENCALIPER_VERSION="${PROJECT_VERSION}")
+  target_link_libraries(opencaliper_launcher PRIVATE Cabinet)
+  # Static C++ runtime: the launcher runs before the bundled runtime DLLs are unpacked.
+  set_target_properties(opencaliper_launcher PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreaded)
+
+  add_executable(opencaliper_pack packaging/windows/pack.cpp)
+  target_link_libraries(opencaliper_pack PRIVATE Cabinet)
 endif()
 
 enable_testing()

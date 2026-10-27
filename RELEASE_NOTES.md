@@ -1,6 +1,17 @@
-## OpenCaliper 0.4.0
+## OpenCaliper 0.4.1
 
 ### What's new
+
+**Windows**
+- **One-file download**: `OpenCaliper-windows-x64.exe`. Double-click it and
+  OpenCaliper starts, with nothing to unzip or install. The first start takes
+  a few seconds while it unpacks itself to
+  `%LOCALAPPDATA%\open-workshop-tools\OpenCaliper\app`; later starts are
+  immediate, and a newer version cleans up the old copy. The zip is still
+  there for anyone who prefers a plain folder.
+- OpenCaliper now has its own icon in Explorer and the taskbar.
+
+## OpenCaliper 0.4.0
 
 **Parameters**
 - **Parameters** (Ctrl+P): give sizes a name once, such as `width = 50` or
@@ -58,7 +69,8 @@ mechanical parts and objects for 3D printing.
 |---|---|
 | Linux, most distributions (Ubuntu 22.04+, Mint 21+, Debian 12+, Fedora 36+, Arch, openSUSE Tumbleweed) | `OpenCaliper-x86_64.AppImage` |
 | Linux, any distribution with Flatpak (also RHEL 9, openSUSE Leap, older systems) | `OpenCaliper.flatpak` |
-| Windows 10 / 11, 64-bit | `OpenCaliper-windows-x64.zip` |
+| Windows 10 / 11, 64-bit, one file: double-click to start | `OpenCaliper-windows-x64.exe` |
+| Windows 10 / 11, 64-bit, as a folder | `OpenCaliper-windows-x64.zip` |
 
 Not sure which one? See [Which Linux file should I use?](https://github.com/open-workshop-tools/Open-Caliper#which-linux-file-should-i-use)
 in the README.

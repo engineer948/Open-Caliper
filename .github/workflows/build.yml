@@ -1,4 +1,4 @@
-# Builds OpenCaliper for Linux (AppImage + .flatpak) and Windows (.zip).
+# Builds OpenCaliper for Linux (AppImage + .flatpak) and Windows (.zip + one-file .exe).
 # Every push/PR: downloadable from the workflow run's "Artifacts".
 # Pushing a tag like v0.1.0: also published as a GitHub Release, so the
 # README's .../releases/latest/download/... links point to the new files.
@@ -109,10 +109,40 @@ jobs:
           Copy-Item LICENSE, THIRD-PARTY-NOTICES.md, README.md $out\
           Copy-Item -Recurse LICENSES $out\
           Compress-Archive -Path $out -DestinationPath OpenCaliper-windows-x64.zip
+          # One-file download: the same folder packed behind a small launcher.
+          build\opencaliper_pack.exe $out build\opencaliper_launcher.exe OpenCaliper-windows-x64.exe
+          if ($LASTEXITCODE -ne 0) { throw "opencaliper_pack failed" }
+      - name: Test the one-file exe
+        shell: pwsh
+        run: |
+          # Unpack into a scratch folder and compare with the zip's folder.
+          $env:LOCALAPPDATA = "$PWD\unpack-test"
+          $env:OPENCALIPER_UNPACK_ONLY = "1"
+          $p = Start-Process -FilePath .\OpenCaliper-windows-x64.exe -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "launcher exited with $($p.ExitCode)" }
+          $dirs = @(Get-ChildItem unpack-test\open-workshop-tools\OpenCaliper\app -Directory)
+          if ($dirs.Count -ne 1) { throw "expected one unpacked folder, got $($dirs.Count)" }
+          $src = (Resolve-Path OpenCaliper).Path
+          $dst = $dirs[0].FullName
+          $want = Get-ChildItem $src -Recurse -File
+          $got = @(Get-ChildItem $dst -Recurse -File)
+          if ($got.Count -ne $want.Count) { throw "file count: packed $($want.Count), unpacked $($got.Count)" }
+          foreach ($f in $want) {
+            $other = Join-Path $dst $f.FullName.Substring($src.Length)
+            if ((Get-FileHash $f.FullName).Hash -ne (Get-FileHash $other).Hash) { throw "differs: $other" }
+          }
+          # A second start must reuse the folder, not unpack again.
+          $p = Start-Process -FilePath .\OpenCaliper-windows-x64.exe -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "second start exited with $($p.ExitCode)" }
+          Write-Host "OK: $($want.Count) files, exe $([math]::Round((Get-Item OpenCaliper-windows-x64.exe).Length / 1MB)) MB"
       - uses: actions/upload-artifact@v4
         with:
           name: OpenCaliper-windows-x64.zip
           path: OpenCaliper-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCaliper-windows-x64.exe
+          path: OpenCaliper-windows-x64.exe
 
   # Publishes whatever was built: if one platform fails, the others are released
   # anyway. Fix it, then move the tag (see README) and the missing file is added
@@ -138,3 +168,4 @@ jobs:
             artifacts/**/OpenCaliper-x86_64.AppImage
             artifacts/**/OpenCaliper.flatpak
             artifacts/**/OpenCaliper-windows-x64.zip
+            artifacts/**/OpenCaliper-windows-x64.exe

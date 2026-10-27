@@ -30,7 +30,7 @@ Every step stays editable in the timeline.
 |---|---|
 | Linux (most distributions) | [**OpenCaliper-x86_64.AppImage**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-x86_64.AppImage) |
 | Linux (any distribution with Flatpak) | [**OpenCaliper.flatpak**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper.flatpak) |
-| Windows 10 / 11 (64-bit) | [**OpenCaliper-windows-x64.zip**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.zip) |
+| Windows 10 / 11 (64-bit) | [**OpenCaliper-windows-x64.exe**](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.exe) (one file) or [OpenCaliper-windows-x64.zip](https://github.com/open-workshop-tools/Open-Caliper/releases/latest/download/OpenCaliper-windows-x64.zip) (folder) |
 
 All versions: [Releases page](https://github.com/open-workshop-tools/Open-Caliper/releases).
 
@@ -82,8 +82,12 @@ flatpak run io.github.open_workshop_tools.OpenCaliper
 Afterwards OpenCaliper is in your application menu. The Flatpak is not on
 Flathub; to update, download the new file and install it again.
 
-**Windows**: unzip `OpenCaliper-windows-x64.zip` and run `OpenCaliper.exe`
-in the `OpenCaliper` folder. If Windows SmartScreen warns about an unknown
+**Windows**: download `OpenCaliper-windows-x64.exe` and double-click it.
+Nothing is installed: on the first start (a few seconds) it unpacks itself to
+`%LOCALAPPDATA%\open-workshop-tools\OpenCaliper\app`, later starts are
+immediate, and a newer version removes the old copy. If you prefer a plain
+folder, unzip `OpenCaliper-windows-x64.zip` and run `OpenCaliper.exe` in the
+`OpenCaliper` folder. If Windows SmartScreen warns about an unknown
 publisher, choose "More info" → "Run anyway". The program is not code-signed.
 
 ## Quick start

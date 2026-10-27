@@ -37,6 +37,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.1" date="2026-10-27">
+      <description>
+        <p>Windows: a one-file download that starts with a double-click, and a program icon.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-27">
       <description>
         <p>Parameters and formulas for every size; fillets, chamfers and shells that keep their edges when earlier steps change; trim, offset, mirror and corner fillets in sketches; hole and mirror features; 3MF export with mesh quality; autosave with crash recovery and recent files.</p>
