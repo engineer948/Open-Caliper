@@ -4,8 +4,13 @@
 #include "app/ProjectFile.h"
 #include "io/Exchange.h"
 #include "view/Viewer.h"
+#ifdef OPENCALIPER_MCP
+#include "app/McpLink.h"
+#include "app/ModelApi.h"
+#endif
 
 #include <BRepAdaptor_Surface.hxx>
+#include <Graphic3d_Camera.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -14,6 +19,9 @@
 
 #include <QActionGroup>
 #include <QApplication>
+#include <QBuffer>
+#include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
@@ -223,6 +231,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   buildSketchUi();
   buildModelUi();
   buildTimeline();
+#ifdef OPENCALIPER_MCP
+  buildToolsMenu();
+#endif
   buildHelpMenu();
 
   // Crash backup, written every minute while there are unsaved changes. The
@@ -241,8 +252,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   refreshTimeline();
   updateActions();
 }
-
-MainWindow::~MainWindow() = default;
 
 // --- UI construction ------------------------------------------------------------
 
@@ -547,22 +556,12 @@ void MainWindow::sketchOnFace() {
     hint(tr("Sketch on face: click a flat face of the body first."));
     return;
   }
-  BRepAdaptor_Surface surface(face);
-  if (surface.GetType() != GeomAbs_Plane) {
+  gp_Ax3 plane;
+  if (!sketchPlaneOnFace(face, plane)) {
     hint(tr("Sketch on face: the selected face is not flat."));
     return;
   }
-  const gp_Pln pln = surface.Plane();
-  gp_Dir normal = pln.Axis().Direction();
-  if (face.Orientation() == TopAbs_REVERSED) normal.Reverse(); // point out of the material
-  // Origin: the world origin projected onto the face plane, so sketch
-  // coordinates line up with the model axes where possible.
-  const gp_Pnt loc = pln.Location();
-  const gp_Vec toOrigin(loc, gp::Origin());
-  const gp_Pnt origin = loc.Translated(toOrigin - gp_Vec(normal) * toOrigin.Dot(gp_Vec(normal)));
-  gp_Dir xdir = pln.Position().XDirection();
-  if (std::abs(normal.Dot(gp::DZ())) < 0.99) xdir = gp::DZ().Crossed(normal); // keep "up" as world Z on walls
-  startSketch(gp_Ax3(origin, normal, xdir));
+  startSketch(plane);
 }
 
 void MainWindow::finishSketch() {
@@ -1541,3 +1540,193 @@ void MainWindow::updateActions() {
 void MainWindow::hint(const QString& text) {
   m_hint->setText(text);
 }
+
+// --- Claude (MCP) -------------------------------------------------------------
+
+#ifdef OPENCALIPER_MCP
+
+// Tool calls from Claude, on this window's document: every change is one undo
+// step and shows up at once. Never opens dialogs (nobody would answer them).
+class MainWindow::McpHost : public mcp::Host {
+public:
+  explicit McpHost(MainWindow& w) : w(w) {}
+
+  const Document& document() const override { return w.m_doc; }
+  bool live() const override { return true; }
+
+  QString apply(Document doc, const QString& what) override {
+    if (const QString why = busy(); !why.isEmpty()) return why;
+    const bool firstBody = w.m_doc.body().IsNull();
+    w.pushUndo();
+    w.m_doc = std::move(doc);
+    w.documentChanged();
+    if (firstBody && !w.m_doc.body().IsNull()) w.m_viewer->fitAll();
+    w.hint(tr("Claude: %1. Ctrl+Z undoes it.").arg(what));
+    return {};
+  }
+  QString undo() override {
+    if (const QString why = busy(); !why.isEmpty()) return why;
+    if (w.m_undo.empty()) return "Nothing to undo.";
+    w.undo();
+    return {};
+  }
+  QString redo() override {
+    if (const QString why = busy(); !why.isEmpty()) return why;
+    if (w.m_redo.empty()) return "Nothing to redo.";
+    w.redo();
+    return {};
+  }
+  QString projectPath() const override { return w.m_path; }
+  QString newProject() override {
+    if (const QString why = busyOrUnsaved(); !why.isEmpty()) return why;
+    w.newProject();
+    return {};
+  }
+  QString openProject(const QString& path) override {
+    if (const QString why = busyOrUnsaved(); !why.isEmpty()) return why;
+    try {
+      project::load(path); // its errors here, not in a message box
+    } catch (const std::exception& e) {
+      return QString::fromStdString(e.what());
+    }
+    if (!w.openProject(path)) return "Could not open the project.";
+    w.addRecent(path);
+    return {};
+  }
+  QString saveProject(const QString& path) override {
+    const QString target = path.isEmpty() ? w.m_path : path;
+    if (target.isEmpty()) return "The project has no file yet: give a path.";
+    if (!QDir::isAbsolutePath(target)) return "path: give a full path, such as /home/me/box.ocal";
+    try {
+      project::save(w.m_doc, target);
+    } catch (const std::exception& e) {
+      return QString::fromStdString(e.what());
+    }
+    if (target != w.m_path) w.addRecent(target);
+    w.setProjectPath(target);
+    w.clearAutosave();
+    w.hint(tr("Claude saved %1").arg(QFileInfo(target).fileName()));
+    return {};
+  }
+  QString screenshot(const QString& name, QByteArray& png) override {
+    const std::pair<const char*, V3d_TypeOfOrientation> views[] = {
+        {"iso", V3d_XposYnegZpos}, {"front", V3d_Yneg}, {"back", V3d_Ypos}, {"top", V3d_Zpos},
+        {"bottom", V3d_Zneg},      {"left", V3d_Xneg},  {"right", V3d_Xpos}};
+    const Handle(V3d_View)& view = w.m_viewer->view();
+    if (view.IsNull()) return "The 3D view is not ready yet.";
+    // Look from the asked side, take the picture, then put the user's camera back.
+    Handle(Graphic3d_Camera) saved = new Graphic3d_Camera();
+    saved->Copy(view->Camera());
+    if (name != "current") {
+      const auto it = std::find_if(std::begin(views), std::end(views), [&](const auto& v) { return name == v.first; });
+      if (it == std::end(views)) return "view: iso, front, back, top, bottom, left, right or current";
+      view->SetProj(it->second);
+      view->FitAll(0.05, false);
+      view->ZFitAll();
+    }
+    QImage image = w.m_viewer->grabFramebuffer();
+    view->Camera()->Copy(saved);
+    view->Invalidate();
+    w.m_viewer->redraw();
+    if (image.isNull()) return "Could not read the 3D view.";
+    if (image.width() > 1280) image = image.scaledToWidth(1280, Qt::SmoothTransformation);
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "PNG");
+    return {};
+  }
+
+private:
+  static QString tr(const char* text) { return MainWindow::tr(text); }
+  QString busy() const {
+    if (w.m_editor->isActive())
+      return "The user is editing a sketch in OpenCaliper. Ask them to finish it (Ctrl+Enter) first.";
+    return {};
+  }
+  QString busyOrUnsaved() const {
+    if (const QString why = busy(); !why.isEmpty()) return why;
+    if (w.isWindowModified())
+      return "The open project has unsaved changes. Save it with save_project, or ask the user what to do.";
+    return {};
+  }
+
+  MainWindow& w;
+};
+
+void MainWindow::buildToolsMenu() {
+  QMenu* m = menuBar()->addMenu(tr("&Tools"));
+  m->addAction(tr("&Claude (MCP)..."), this, &MainWindow::showClaudeDialog);
+  m_mcpHost = std::make_unique<McpHost>(*this);
+  m_mcpListener = new mcp::Listener(*m_mcpHost, this);
+  m_mcpStatus = new QLabel(this);
+  statusBar()->addPermanentWidget(m_mcpStatus);
+  connect(m_mcpListener, &mcp::Listener::stateChanged, this, &MainWindow::updateClaudeStatus);
+  m_mcpListener->setEnabled(mcp::enabled());
+  updateClaudeStatus();
+}
+
+void MainWindow::updateClaudeStatus() {
+  m_mcpStatus->setVisible(m_mcpListener->listening());
+  m_mcpStatus->setText(m_mcpListener->connected() ? tr("Claude: connected") : tr("Claude: on"));
+  m_mcpStatus->setStyleSheet(m_mcpListener->connected() ? "color: #2e7d32; font-weight: bold" : "");
+}
+
+void MainWindow::showClaudeDialog() {
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Claude (MCP)"));
+  dlg.setMinimumWidth(560);
+  auto* layout = new QVBoxLayout(&dlg);
+  auto* intro = new QLabel(tr("Claude, Anthropic's AI assistant, can read and change the open model through MCP: "
+                              "\"make the walls 3 mm and put M3 holes in the corners\". Every change is a normal step "
+                              "in the timeline, and Ctrl+Z undoes it."),
+                           &dlg);
+  intro->setWordWrap(true);
+  auto* on = new QCheckBox(tr("Allow Claude to work on the open model"), &dlg);
+  on->setChecked(mcp::enabled());
+  auto* state = new QLabel(&dlg);
+  state->setWordWrap(true);
+  auto* howto = new QLabel(tr("<b>Connect Claude Code</b>: run this once in a terminal:"), &dlg);
+  auto* command = new QLineEdit("claude mcp add opencaliper -- " + mcp::serverCommand(), &dlg);
+  command->setReadOnly(true);
+  command->setCursorPosition(0);
+  auto* copy = new QPushButton(tr("Copy"), &dlg);
+  connect(copy, &QPushButton::clicked, &dlg, [command] { QGuiApplication::clipboard()->setText(command->text()); });
+  auto* row = new QHBoxLayout;
+  row->addWidget(command, 1);
+  row->addWidget(copy);
+  auto* note = new QLabel(tr("Then ask Claude for a part, for example: \"In OpenCaliper, make a 60 x 40 x 20 mm box "
+                             "with 2 mm walls and an open top.\" When no OpenCaliper window is open, Claude works on "
+                             "project files instead."),
+                          &dlg);
+  note->setWordWrap(true);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  for (QWidget* widget : std::initializer_list<QWidget*>{intro, on, state, howto}) layout->addWidget(widget);
+  layout->addLayout(row);
+  layout->addWidget(note);
+  layout->addWidget(buttons);
+
+  auto update = [this, state] {
+    if (!m_mcpListener->problem().isEmpty()) state->setText(m_mcpListener->problem());
+    else if (m_mcpListener->connected()) state->setText(tr("Claude is connected to this window."));
+    else if (m_mcpListener->listening()) state->setText(tr("On. Claude connects with its first request."));
+    else state->setText(tr("Off: Claude cannot read or change anything."));
+  };
+  connect(on, &QCheckBox::toggled, &dlg, [this](bool enable) {
+    mcp::setEnabled(enable);
+    m_mcpListener->setEnabled(enable);
+  });
+  connect(m_mcpListener, &mcp::Listener::stateChanged, &dlg, update);
+  update();
+  dlg.exec();
+}
+
+MainWindow::~MainWindow() {
+  delete m_mcpListener; // it uses m_mcpHost
+}
+
+#else
+
+MainWindow::~MainWindow() = default;
+
+#endif

@@ -9,7 +9,30 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 
+#include <cstring>
+
+#ifdef OPENCALIPER_MCP
+#include "app/McpLink.h"
+#endif
+
 int main(int argc, char** argv) {
+  QApplication::setApplicationName("OpenCaliper");
+  QApplication::setOrganizationName("open-workshop-tools"); // settings and crash backups live under this
+  QApplication::setApplicationVersion(OPENCALIPER_VERSION);
+
+  // OCCT console output: warnings and errors only, no info chatter.
+  for (const Handle(Message_Printer)& p : Message::DefaultMessenger()->Printers())
+    p->SetTraceLevel(Message_Warning);
+
+#ifdef OPENCALIPER_MCP
+  // --mcp: started by Claude; MCP on stdin/stdout, no window.
+  for (int i = 1; i < argc; ++i)
+    if (std::strcmp(argv[i], "--mcp") == 0) {
+      QCoreApplication app(argc, argv);
+      return mcp::runStdio();
+    }
+#endif
+
 #if defined(__linux__)
   // OCCT on Linux renders through GLX, so Qt must use X11 (XWayland on Wayland).
   if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -26,14 +49,7 @@ int main(int argc, char** argv) {
     QSurfaceFormat::setDefaultFormat(f);
   }
 
-  // OCCT console output: warnings and errors only, no info chatter.
-  for (const Handle(Message_Printer)& p : Message::DefaultMessenger()->Printers())
-    p->SetTraceLevel(Message_Warning);
-
   QApplication app(argc, argv);
-  QApplication::setApplicationName("OpenCaliper");
-  QApplication::setOrganizationName("open-workshop-tools"); // settings and crash backups live under this
-  QApplication::setApplicationVersion(OPENCALIPER_VERSION);
   QApplication::setDesktopFileName("io.github.open_workshop_tools.OpenCaliper"); // taskbar icon on Wayland/X11
   QApplication::setStyle("Fusion"); // same look on every platform
   MainWindow w;

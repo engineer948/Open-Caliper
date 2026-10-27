@@ -2,6 +2,7 @@
 
 #include "model/Document.h"
 
+#include <QJsonObject>
 #include <QString>
 
 // Project files (.ocal): the feature timeline as JSON. Bodies are not stored,
@@ -13,5 +14,9 @@ inline constexpr const char* kExtension = "ocal";
 // Throw std::runtime_error with a user-facing message.
 void save(const model::Document& doc, const QString& path);
 model::Document load(const QString& path);
+
+// One feature as stored in the file (also used by the MCP tools).
+QJsonObject featureToJson(const model::Feature& f);
+std::unique_ptr<model::Feature> featureFromJson(const QJsonObject& o);
 
 } // namespace project

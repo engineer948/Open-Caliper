@@ -221,6 +221,10 @@ struct MassProperties {
 };
 MassProperties massProperties(const TopoDS_Shape& shape);
 
+// Sketch plane on a flat face: normal out of the material, origin where the
+// world origin projects onto it, X kept horizontal on walls. False if not flat.
+bool sketchPlaneOnFace(const TopoDS_Shape& face, gp_Ax3& plane);
+
 // Human-readable measurement of one or two picked sub-shapes (vertex, edge,
 // face): lengths, areas, diameters, distances and angles. Empty if nothing fits.
 std::string measure(const std::vector<TopoDS_Shape>& picked);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenCaliper VERSION 0.4.2 LANGUAGES CXX)
+project(OpenCaliper VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,6 +65,15 @@ qt_add_resources(opencaliper licenses
     LICENSES/FTL.txt
 )
 
+# Claude (MCP): Linux only for now; Windows needs a console helper first
+# (see the 0.5 plan). ModelApi and McpServer need only Qt Core.
+if(NOT WIN32)
+  find_package(Qt6 REQUIRED COMPONENTS Network)
+  target_sources(opencaliper PRIVATE src/app/ModelApi.cpp src/app/McpServer.cpp src/app/McpLink.cpp)
+  target_link_libraries(opencaliper PRIVATE Qt6::Network)
+  target_compile_definitions(opencaliper PRIVATE OPENCALIPER_MCP)
+endif()
+
 if(WIN32)
   target_link_libraries(opencaliper PRIVATE opengl32)
   set_target_properties(opencaliper PROPERTIES WIN32_EXECUTABLE ON)
@@ -103,6 +112,11 @@ add_test(NAME project_tests COMMAND project_tests)
 add_executable(dimension_tests tests/dimension_tests.cpp src/app/Dimensions.cpp)
 target_link_libraries(dimension_tests PRIVATE cadcore TKService TKV3d)
 add_test(NAME dimension_tests COMMAND dimension_tests)
+if(NOT WIN32)
+  add_executable(mcp_tests tests/mcp_tests.cpp src/app/ModelApi.cpp src/app/McpServer.cpp src/app/ProjectFile.cpp)
+  target_link_libraries(mcp_tests PRIVATE cadcore Qt6::Core)
+  add_test(NAME mcp_tests COMMAND mcp_tests)
+endif()
 
 include(GNUInstallDirs)
 install(TARGETS opencaliper RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

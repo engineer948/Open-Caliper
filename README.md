@@ -22,6 +22,8 @@ Every step stays editable in the timeline.
   double-click one to change it and the part rebuilds
 - Editable history timeline, undo and redo, autosave with crash recovery
 - Export STEP, IGES, STL, OBJ, 3MF; import STEP, IGES, BREP
+- Works with Claude (MCP, Linux): describe a part and Claude builds it in the
+  open window, step by step, with undo
 - Linux and Windows
 
 ## Download
@@ -90,6 +92,16 @@ folder, unzip `OpenCaliper-windows-x64.zip` and run `OpenCaliper.exe` in the
 `OpenCaliper` folder. If Windows SmartScreen warns about an unknown
 publisher, choose "More info" → "Run anyway". The program is not code-signed.
 
+**Antivirus warnings**: a few scanners that guess with machine learning
+(on VirusTotal typically 1–3 out of about 70, with names like
+`ML.Attribute.HighConfidence` or `W32.Malware.<number>`) flag unsigned
+programs they have not seen before, including OpenCaliper. These are false
+positives. OpenCaliper does not use the network, the one-file `.exe` only
+unpacks the program to the folder above and starts it (source:
+[`packaging/windows/`](packaging/windows/)), and every download is built from
+this repository by GitHub Actions, where the build log is public. If your
+antivirus blocks it, please report it to the vendor as a false positive.
+
 ## Quick start
 
 1. **Sketch XY**: start drawing on the ground plane.
@@ -107,6 +119,36 @@ publisher, choose "More info" → "Run anyway". The program is not code-signed.
 Mouse: left drag rotates, middle drag pans, the wheel zooms, **F** fits the
 view, **0/1/2/3** select iso/front/top/right. The cube in the corner is
 clickable.
+
+## Use with Claude (Linux)
+
+OpenCaliper can be driven by [Claude](https://claude.ai), Anthropic's AI
+assistant, through MCP (Model Context Protocol). Ask for a part ("a 60 × 40 ×
+20 mm box with 2 mm walls, an open top and M3 holes in the corners") and
+Claude builds it in the open OpenCaliper window: parameters, sketches,
+extrudes, fillets, shells, holes. It checks the result with a picture of the
+view. Every change is a normal step in the timeline, and **Ctrl+Z** undoes it.
+
+1. In OpenCaliper, open **Tools > Claude (MCP)** and tick **Allow Claude to
+   work on the open model**. It is off by default; while it is off, Claude
+   cannot read or change anything.
+2. Copy the command shown there and run it once in a terminal. For the
+   AppImage it looks like:
+   ```sh
+   claude mcp add opencaliper -- /path/to/OpenCaliper-x86_64.AppImage --mcp
+   ```
+   and for the Flatpak:
+   ```sh
+   claude mcp add opencaliper -- flatpak run io.github.open_workshop_tools.OpenCaliper --mcp
+   ```
+   This is for [Claude Code](https://claude.com/claude-code); other MCP
+   clients take the same command (`... --mcp`, talking over stdin/stdout).
+3. Start Claude Code and ask for a part. The status bar of OpenCaliper shows
+   "Claude: connected" while it works.
+
+When no OpenCaliper window is open, Claude works on `.ocal` project files
+instead (open, change, save, export), without pictures. Windows support
+follows in a later version.
 
 ## File formats
 

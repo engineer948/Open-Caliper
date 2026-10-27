@@ -20,6 +20,9 @@ class QLockFile;
 class QMenu;
 class QToolBar;
 class Viewer;
+#ifdef OPENCALIPER_MCP
+namespace mcp { class Listener; }
+#endif
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -45,6 +48,13 @@ private:
   void buildModelUi();
   void buildTimeline();
   void buildHelpMenu();
+#ifdef OPENCALIPER_MCP
+  // Claude (MCP): tool calls work on this window's document, see McpLink.
+  class McpHost;
+  void buildToolsMenu();
+  void showClaudeDialog();
+  void updateClaudeStatus();
+#endif
 
   // sketches
   void startSketch(const gp_Ax3& plane);
@@ -128,4 +138,10 @@ private:
   std::vector<std::pair<Handle(AIS_Shape), int>> m_sketchAis; // shown sketch -> history index
   DimensionList m_dimensions;
   bool m_showDimensions = true;
+
+#ifdef OPENCALIPER_MCP
+  std::unique_ptr<McpHost> m_mcpHost;
+  mcp::Listener* m_mcpListener = nullptr;
+  QLabel* m_mcpStatus = nullptr;
+#endif
 };

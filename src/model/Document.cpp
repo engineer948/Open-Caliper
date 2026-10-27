@@ -38,6 +38,8 @@
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
+#include <gp.hxx>
+#include <gp_Pln.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <gp_Trsf.hxx>
@@ -229,6 +231,24 @@ MassProperties massProperties(const TopoDS_Shape& shape) {
     m.size = gp_XYZ(x1 - x0, y1 - y0, z1 - z0);
   }
   return m;
+}
+
+bool sketchPlaneOnFace(const TopoDS_Shape& face, gp_Ax3& plane) {
+  if (face.IsNull() || face.ShapeType() != TopAbs_FACE) return false;
+  BRepAdaptor_Surface surface(TopoDS::Face(face));
+  if (surface.GetType() != GeomAbs_Plane) return false;
+  const gp_Pln pln = surface.Plane();
+  gp_Dir normal = pln.Axis().Direction();
+  if (face.Orientation() == TopAbs_REVERSED) normal.Reverse(); // point out of the material
+  // Origin: the world origin projected onto the face plane, so sketch
+  // coordinates line up with the model axes where possible.
+  const gp_Pnt loc = pln.Location();
+  const gp_Vec toOrigin(loc, gp::Origin());
+  const gp_Pnt origin = loc.Translated(toOrigin - gp_Vec(normal) * toOrigin.Dot(gp_Vec(normal)));
+  gp_Dir xdir = pln.Position().XDirection();
+  if (std::abs(normal.Dot(gp::DZ())) < 0.99) xdir = gp::DZ().Crossed(normal); // keep "up" as world Z on walls
+  plane = gp_Ax3(origin, normal, xdir);
+  return true;
 }
 
 namespace {

@@ -294,6 +294,9 @@ std::unique_ptr<Feature> readFeature(const QJsonObject& o) {
 
 } // namespace
 
+QJsonObject featureToJson(const Feature& f) { return writeFeature(f); }
+std::unique_ptr<Feature> featureFromJson(const QJsonObject& o) { return readFeature(o); }
+
 void save(const Document& doc, const QString& path) {
   QJsonArray features, parameters;
   for (size_t i = 0; i < doc.size(); ++i) features.append(writeFeature(doc.feature(i)));

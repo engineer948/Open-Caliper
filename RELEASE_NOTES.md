@@ -1,3 +1,24 @@
+## OpenCaliper 0.5.0
+
+### What's new
+
+**Claude can build parts in OpenCaliper (Linux)**
+- OpenCaliper now speaks MCP (Model Context Protocol), so
+  [Claude](https://claude.ai) can read and change the open model. Describe a
+  part, for example "a 60 x 40 x 20 mm box with 2 mm walls and M3 holes in
+  the corners", and Claude adds the parameters, sketches and steps in the open
+  window while you watch. It looks at the result through a picture of the view
+  and corrects itself.
+- Every change Claude makes is a normal step in the timeline: double-click to
+  change it, or press **Ctrl+Z** to undo it.
+- Off by default. Turn it on in **Tools > Claude (MCP)**; the same window
+  shows the one-line command that connects Claude Code. See "Use with Claude"
+  in the README.
+- Without an open window, Claude can still open, change, save and export
+  `.ocal` projects.
+- Windows gets this in a later version; the Windows build is otherwise the
+  same as before.
+
 ## OpenCaliper 0.4.2
 
 ### Fixed
@@ -108,6 +129,8 @@ in the README.
 - **Change your mind**: every step is in the timeline; double-click it to
   change a value or edit its sketch, and everything after it updates. Undo and
   redo with Ctrl+Z / Ctrl+Y.
+- **Claude** (Linux): describe a part and Claude builds it step by step in the
+  open window, with undo (Tools > Claude (MCP)).
 - **Files**: save projects as `.ocal` (with autosave and crash recovery);
   export STEP, IGES, STL, OBJ, 3MF and BREP; import STEP, IGES and BREP.
 - Clickable view cube, standard views (0/1/2/3), Help > Licenses.
@@ -120,7 +143,9 @@ in the README.
   timeline.
 - The 3D view runs through X11 on Linux (XWayland on Wayland desktops).
 - x86-64 only; no macOS build yet. The Windows build is not code-signed, so
-  SmartScreen may ask for confirmation.
+  SmartScreen may ask for confirmation, and a few machine-learning antivirus
+  scanners may flag it (false positives; see "Antivirus warnings" in the
+  README).
 
 ### Requirements
 
